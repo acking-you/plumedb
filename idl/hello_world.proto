@@ -1,0 +1,14 @@
+syntax = "proto3";
+package plumedb;
+
+message HelloWorldReq{
+    string name = 1;
+}
+
+message HelloWorldResp{
+    string msg = 1;
+}
+
+service HelloWorldService {
+    rpc hello_world(HelloWorldReq) returns (HelloWorldResp);
+}
