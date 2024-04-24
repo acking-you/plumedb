@@ -1,8 +1,7 @@
 use std::net::SocketAddr;
 
-use volo_grpc::server::{Server, ServiceBuilder};
-
 use plumedb::S;
+use volo_grpc::server::{Server, ServiceBuilder};
 
 #[volo::main]
 async fn main() {

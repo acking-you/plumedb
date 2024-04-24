@@ -18,19 +18,8 @@ anyhow.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
-[profile.release]
-opt-level = 3
-debug = true
-debug-assertions = false
-overflow-checks = false
-lto = true
-panic = 'unwind'
-incremental = false
-codegen-units = 1
-rpath = false
-
 [workspace]
-members = ["plumekv", "volo-gen"]
+members = ["lsm-kv", "volo-gen"]
 resolver = "2"
 
 [workspace.package]
@@ -47,8 +36,26 @@ pilota = "0.10.0"
 snafu = "0.7.5"
 flume = { version = "0.11.0", default-features = false, features = ["async"] }
 once_cell = "1.18.0"
-
+hashbrown = "0.14.3"
+serde_json = { version = "1.0" }
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = [
+    "env-filter",
+    "fmt",
+], default-features = true }
 anyhow = "1"
 async-trait = "0.1"
 futures = "0.3"
 tokio = "1"
+
+[profile.release]
+opt-level = 3
+debug = true
+debug-assertions = false
+overflow-checks = false
+lto = true
+panic = 'unwind'
+incremental = false
+codegen-units = 1
+rpath = false

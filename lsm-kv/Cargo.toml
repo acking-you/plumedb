@@ -1,5 +1,5 @@
 [package]
-name = "lokv"
+name = "lsm-kv"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -14,7 +14,18 @@ parking_lot = "0.12"
 ouroboros = "0.18"
 chrono = "0.4.35"
 crc32fast = "1.4.0"
+farmhash = "1.1.5"
 moka = { version = "0.12.5", features = ["sync"] }
-flume = { workspace = true }
+crossbeam-channel = "0.5.12"
+# flume = { workspace = true }
 snafu = { workspace = true }
 anyhow = { workspace = true }
+hashbrown = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+once_cell = { workspace = true }

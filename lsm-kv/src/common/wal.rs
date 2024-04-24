@@ -1,16 +1,16 @@
 //! WAL implementation with checksum
 use std::fs::{File, OpenOptions};
-use std::hash::Hasher;
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{ensure, Context, Result};
 use bytes::{Buf, BufMut, Bytes};
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
 
-use crate::common::key::{KeyBytes, KeySlice};
+use super::size::{CheckSumBuilder, CheckSumType, KeyLenType, Size, ValueLenType};
+use crate::common::key::KeySlice;
 
 /// Write-Ahead Logging is implemented to prevent data loss
 pub struct Wal {
@@ -26,8 +26,10 @@ impl Wal {
                     .read(true)
                     .create_new(true)
                     .write(true)
-                    .open(path)
-                    .context("failed to create WAL")?,
+                    .open(path.as_ref())
+                    .with_context(|| {
+                        format!("failed to create WAL with path:{:?}", path.as_ref())
+                    })?,
             ))),
         })
     }
@@ -35,7 +37,7 @@ impl Wal {
     /// Read contents of WAL file to recover data to skiplist.
     /// Note that the key and value is represented by u32 for
     /// length in the WAL
-    pub fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<KeyBytes, Bytes>) -> Result<Self> {
+    pub fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<Bytes, Bytes>) -> Result<Self> {
         let path = path.as_ref();
         let mut file = OpenOptions::new()
             .read(true)
@@ -48,23 +50,21 @@ impl Wal {
         let mut rbuf: &[u8] = buf.as_slice();
         while rbuf.has_remaining() {
             // get key
-            let mut hasher = crc32fast::Hasher::new();
-            let key_len = rbuf.get_u32() as usize;
-            hasher.write_u32(key_len as u32);
-            let key = Bytes::copy_from_slice(&rbuf[..key_len]);
-            hasher.write(&key);
-            rbuf.advance(key_len);
+            let mut checksum_builder = CheckSumBuilder::new();
+            let key_len = KeyLenType::get_and_advance(&mut rbuf);
+            checksum_builder.write_key_len(key_len);
+            let key = Bytes::copy_from_slice(&rbuf[..key_len.into()]);
+            checksum_builder.write_bytes(&key);
+            rbuf.advance(key_len.into());
             // get value
-            let value_len = rbuf.get_u32() as usize;
-            hasher.write_u32(value_len as u32);
-            let value = Bytes::copy_from_slice(&rbuf[..value_len]);
-            hasher.write(&value);
-            rbuf.advance(value_len);
-            let checksum = rbuf.get_u32();
-            if hasher.finalize() != checksum {
-                bail!("checksum mismatch");
-            }
-            skiplist.insert(KeyBytes::from_bytes(key), value);
+            let value_len = ValueLenType::get_and_advance(&mut rbuf);
+            checksum_builder.write_value_len(value_len);
+            let value = Bytes::copy_from_slice(&rbuf[..value_len.into()]);
+            checksum_builder.write_bytes(&value);
+            rbuf.advance(value_len.into());
+            let checksum = CheckSumType::get_and_advance(&mut rbuf);
+            ensure!(checksum_builder.finish() == checksum, "checksum mismatch");
+            skiplist.insert(key, value);
         }
         Ok(Self {
             file: Arc::new(Mutex::new(BufWriter::new(file))),
@@ -77,20 +77,23 @@ impl Wal {
     pub fn put(&self, key: KeySlice, value: &[u8]) -> Result<()> {
         let mut file = self.file.lock();
         let mut buf: Vec<u8> =
-            Vec::with_capacity(key.key_len() + value.len() + std::mem::size_of::<u64>());
-        let mut hasher = crc32fast::Hasher::new();
+            Vec::with_capacity(key.len() + value.len() + CheckSumType::RAW_SIZE * 2);
+        let mut checksum_builder = CheckSumBuilder::new();
+        let key_len: KeyLenType = key.len().into();
+        let value_len: ValueLenType = value.len().into();
         // put key
-        hasher.write_u32(key.key_len() as u32);
-        buf.put_u32(key.key_len() as u32);
-        hasher.write(key.key_ref());
-        buf.put_slice(key.key_ref());
+        checksum_builder.write_key_len(key_len);
+        key_len.put_to_buffer(&mut buf);
+        checksum_builder.write_bytes(key.raw_ref());
+        buf.put_slice(key.raw_ref());
         // put value
-        hasher.write_u32(value.len() as u32);
-        buf.put_u32(value.len() as u32);
+        checksum_builder.write_value_len(value_len);
+        value_len.put_to_buffer(&mut buf);
+        checksum_builder.write_bytes(value);
         buf.put_slice(value);
-        hasher.write(value);
         // put checksum
-        buf.put_u32(hasher.finalize());
+        let checksum = checksum_builder.finish();
+        checksum.put_to_buffer(&mut buf);
         file.write_all(&buf)?;
         Ok(())
     }

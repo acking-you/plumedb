@@ -1,11 +1,15 @@
+# Please refer to https://www.cloudwego.io/docs/volo/guide/config/ for the configuration file format.
 entries:
-  default:
-    protocol: protobuf
+  proto:
     filename: volo_gen.rs
+    protocol: protobuf
+    services:
     idls:
-    - source: local
-      path: ../idl/hello_world.proto
-      includes:
-      - ../idl
-    touch_all: false
-    nonstandard_snake_case: false
+      - source: local
+        path: ../idl/lsm_kv.proto
+        includes:
+          - ../idl
+      - source: local
+        path: ../idl/hello_world.proto
+        includes:
+          - ../idl

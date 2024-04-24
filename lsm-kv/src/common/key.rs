@@ -1,5 +1,6 @@
 //! Abstraction and implementation of Key
 use std::fmt::Debug;
+use std::ops::Bound;
 
 use bytes::Bytes;
 
@@ -40,7 +41,7 @@ impl<T: AsRef<[u8]>> Key<T> {
     }
 
     /// Get the length of the Key
-    pub fn key_len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.0.as_ref().len()
     }
 
@@ -83,7 +84,7 @@ impl Key<Vec<u8>> {
     }
 
     #[allow(missing_docs)]
-    pub fn key_ref(&self) -> &[u8] {
+    pub fn raw_ref(&self) -> &[u8] {
         self.0.as_ref()
     }
 }
@@ -105,7 +106,7 @@ impl Key<Bytes> {
     }
 
     #[allow(missing_docs)]
-    pub fn key_ref(&self) -> &[u8] {
+    pub fn raw_ref(&self) -> &[u8] {
         self.0.as_ref()
     }
 }
@@ -122,7 +123,7 @@ impl<'a> Key<&'a [u8]> {
     }
 
     #[allow(missing_docs)]
-    pub fn key_ref(self) -> &'a [u8] {
+    pub fn raw_ref(self) -> &'a [u8] {
         self.0
     }
 }
@@ -164,5 +165,17 @@ impl<T: AsRef<[u8]> + PartialOrd> PartialOrd for Key<T> {
 impl<T: AsRef<[u8]> + Ord> Ord for Key<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.as_ref().cmp(other.0.as_ref())
+    }
+}
+
+/// Create a bound of `Bytes` from a bound of `&[u8]`.
+pub(crate) fn map_bound<T, F>(bound: Bound<&[u8]>, mut convertor: F) -> Bound<T>
+where
+    F: FnMut(&[u8]) -> T,
+{
+    match bound {
+        Bound::Included(x) => Bound::Included(convertor(x)),
+        Bound::Excluded(x) => Bound::Excluded(convertor(x)),
+        Bound::Unbounded => Bound::Unbounded,
     }
 }

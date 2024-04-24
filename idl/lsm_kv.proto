@@ -1,0 +1,51 @@
+syntax = "proto3";
+package plumedb;
+
+
+message KeyValePair{
+    bytes key = 1;
+    bytes value = 2;
+}
+
+message FillReq{
+    repeated KeyValePair pairs = 1;
+}
+
+message FillResp{
+    uint32 filled_num = 1;
+    uint64 query_time = 2;
+}
+
+message GetReq{
+    bytes key = 1;
+}
+
+enum ReadStatus{
+    MEM_TABLE = 0;
+    L0_TABLE = 1;
+    BLOCK_CACHE = 2;
+    BLOCK = 3;
+}
+
+message GetResp{
+    bytes value = 1;
+    ReadStatus status = 2;
+    uint64 query_time = 3;
+}
+
+message ScanReq{
+    bytes start = 1;
+    bytes end = 2;
+}
+
+message ScanResp{
+    repeated bytes values = 1;
+    uint32 cache_hit =2;
+    uint64 query_time = 3;
+}
+
+service LsmKVService {
+    rpc fill(FillReq) returns (FillResp);
+    rpc get(GetReq) returns (GetResp);
+    rpc scan(ScanReq) returns (ScanResp);
+}
