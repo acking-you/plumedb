@@ -1,4 +1,8 @@
 //! Final KV storage implementation
+pub mod lsm_iterator;
+pub mod lsm_storage;
+pub mod manifest;
+pub mod profier;
 
 use std::ops::Bound;
 use std::path::Path;
@@ -9,13 +13,10 @@ use parking_lot::Mutex;
 
 use self::lsm_iterator::{FusedIterator, LsmIterator};
 use self::lsm_storage::{LsmStorageInner, LsmStorageOptions, WriteBatchRecord};
+use crate::common::profier::{ReadProfiler, WriteProfiler};
 use crate::compact::trigger::{spawn_compaction_thread, spawn_flush_thread};
 use crate::compact::CompactionOptions;
 use crate::table::mem_table::MemTable;
-pub mod debug;
-pub mod lsm_iterator;
-pub mod lsm_storage;
-pub mod manifest;
 
 /// A thin wrapper for `LsmStorageInner` and the user interface for MiniLSM.
 pub struct LsmKV<T: CompactionOptions> {
@@ -107,8 +108,24 @@ impl<Options: CompactionOptions> LsmKV<Options> {
         self.inner.get(key)
     }
 
+    pub fn get_with_profier(
+        &self,
+        profier: &mut ReadProfiler,
+        key: &[u8],
+    ) -> anyhow::Result<Option<Bytes>> {
+        self.inner.get_with_profiler(profier, key)
+    }
+
     pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> anyhow::Result<()> {
         self.inner.write_batch(batch)
+    }
+
+    pub fn write_bytes_batch_with_profier(
+        &self,
+        profiler: &mut WriteProfiler,
+        batch: &[WriteBatchRecord<Bytes>],
+    ) -> anyhow::Result<()> {
+        self.inner.write_bytes_with_profiler(profiler, batch)
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) -> anyhow::Result<()> {

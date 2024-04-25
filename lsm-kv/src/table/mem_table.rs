@@ -13,10 +13,12 @@ use super::sstable::SsTableBuilder;
 use crate::common::id::TableId;
 use crate::common::iterator::StorageIterator;
 use crate::common::key::{map_bound, KeySlice};
+use crate::common::profier::BlockProfiler;
 use crate::common::wal::Wal;
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
+#[snafu(visibility(pub(super)))]
 pub enum MemTableError {
     #[snafu(display("Failed to crate MemTable with WAL"))]
     CrateWithWAL { source: anyhow::Error },
@@ -28,17 +30,17 @@ pub enum MemTableError {
     SyncWithWAL { source: anyhow::Error },
 }
 
-type Result<T, E = MemTableError> = std::result::Result<T, E>;
+pub(super) type Result<T, E = MemTableError> = std::result::Result<T, E>;
 
 /// A basic mem-table based on crossbeam-skiplist.
 ///
 /// An initial implementation of memtable is part of week 1, day 1. It will be incrementally
 /// implemented in other chapters of week 1 and week 2.
 pub struct MemTable {
-    map: Arc<SkipMap<Bytes, Bytes>>,
-    wal: Option<Wal>,
     id: TableId,
-    approximate_size: Arc<AtomicUsize>,
+    pub(super) approximate_size: Arc<AtomicUsize>,
+    pub(super) wal: Option<Wal>,
+    pub(super) map: Arc<SkipMap<Bytes, Bytes>>,
 }
 
 impl MemTable {
@@ -200,5 +202,14 @@ impl StorageIterator for MemTableIterator {
         });
         self.with_item_mut(|i| *i = item);
         Ok(())
+    }
+
+    fn block_profiler(&self) -> crate::common::profier::BlockProfiler {
+        // no block
+        BlockProfiler::default()
+    }
+
+    fn reset_block_profiler(&mut self) {
+        // no block
     }
 }

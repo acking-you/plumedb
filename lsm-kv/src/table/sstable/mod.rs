@@ -23,6 +23,7 @@ pub mod sst_iterator;
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
+#[snafu(visibility(pub(super)))]
 pub enum SStableError {
     #[snafu(display("Failed to read bloom filter offset"))]
     ReadBloomOffset { source: anyhow::Error },
@@ -48,7 +49,7 @@ pub enum SStableError {
     SSTableMetaDataNotEmpty,
 }
 
-type Result<T, E = SStableError> = std::result::Result<T, E>;
+pub(super) type Result<T, E = SStableError> = std::result::Result<T, E>;
 
 /// Structure of SSTable
 pub struct SsTable {
@@ -58,11 +59,11 @@ pub struct SsTable {
     pub(crate) block_meta: Vec<BlockMeta>,
     /// The offset that indicates the start point of meta blocks in `file`.
     pub(crate) block_meta_offset: OffsetType,
-    id: TableId,
-    block_cache: Option<Arc<BlockCache>>,
+    pub(super) id: TableId,
+    pub(super) block_cache: Option<Arc<BlockCache>>,
     first_key: KeyBytes,
     last_key: KeyBytes,
-    pub(crate) bloom: Option<Bloom>,
+    pub(crate) bloom: Bloom,
 }
 impl SsTable {
     /// Open SSTable from a file.
@@ -81,7 +82,7 @@ impl SsTable {
         let raw_bloom = file
             .read(bloom_offset, len - bloom_offset - offset_raw_size)
             .context(ReadBloomSnafu)?;
-        let bloom_filter = Bloom::decode(&raw_bloom).context(DecodeBloomSnafu)?;
+        let bloom = Bloom::decode(&raw_bloom).context(DecodeBloomSnafu)?;
         // get blocks metadata
         let raw_meta_offset = file
             .read(bloom_offset - offset_raw_size, offset_raw_size)
@@ -103,7 +104,7 @@ impl SsTable {
             block_meta_offset: block_meta_offset.into(),
             id,
             block_cache,
-            bloom: Some(bloom_filter),
+            bloom,
         })
     }
 
@@ -283,7 +284,7 @@ impl SsTableBuilder {
             block_meta: self.meta,
             block_meta_offset: meta_offset,
             block_cache,
-            bloom: Some(bloom),
+            bloom,
         })
     }
 }

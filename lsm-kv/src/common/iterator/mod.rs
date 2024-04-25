@@ -1,5 +1,7 @@
 //! Defines some iter trait
 
+use super::profier::BlockProfiler;
+
 pub mod concat_iterator;
 pub mod merge_iterator;
 pub mod tow_merge_iterator;
@@ -27,4 +29,8 @@ pub trait StorageIterator {
     fn num_active_iterators(&self) -> usize {
         1
     }
+
+    fn block_profiler(&self) -> BlockProfiler;
+
+    fn reset_block_profiler(&mut self);
 }

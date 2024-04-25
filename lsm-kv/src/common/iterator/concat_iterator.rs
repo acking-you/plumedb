@@ -6,6 +6,7 @@ use anyhow::{ensure, Result};
 
 use super::StorageIterator;
 use crate::common::key::KeySlice;
+use crate::common::profier::BlockProfiler;
 use crate::table::sstable::sst_iterator::SsTableIterator;
 use crate::table::sstable::SsTable;
 
@@ -16,6 +17,7 @@ pub struct SstConcatIterator {
     current: Option<SsTableIterator>,
     next_sst_idx: usize,
     sstables: Vec<Arc<SsTable>>,
+    expired_sst_block_profiler: BlockProfiler,
 }
 
 impl SstConcatIterator {
@@ -39,6 +41,7 @@ impl SstConcatIterator {
                 current: None,
                 next_sst_idx: 0,
                 sstables,
+                expired_sst_block_profiler: BlockProfiler::default(),
             });
         }
         let mut iter = Self {
@@ -47,6 +50,7 @@ impl SstConcatIterator {
             )?),
             next_sst_idx: 1,
             sstables,
+            expired_sst_block_profiler: BlockProfiler::default(),
         };
         iter.move_until_valid()?;
         Ok(iter)
@@ -63,6 +67,7 @@ impl SstConcatIterator {
                 current: None,
                 next_sst_idx: sstables.len(),
                 sstables,
+                expired_sst_block_profiler: BlockProfiler::default(),
             });
         }
         let mut iter = Self {
@@ -72,6 +77,7 @@ impl SstConcatIterator {
             )?),
             next_sst_idx: idx + 1,
             sstables,
+            expired_sst_block_profiler: BlockProfiler::default(),
         };
         iter.move_until_valid()?;
         Ok(iter)
@@ -85,6 +91,8 @@ impl SstConcatIterator {
             if self.next_sst_idx >= self.sstables.len() {
                 self.current = None;
             } else {
+                // do profiler
+                self.expired_sst_block_profiler += iter.block_profiler();
                 self.current = Some(SsTableIterator::create_and_seek_to_first(
                     self.sstables[self.next_sst_idx].clone(),
                 )?);
@@ -132,5 +140,21 @@ impl StorageIterator for SstConcatIterator {
 
     fn num_active_iterators(&self) -> usize {
         1
+    }
+
+    fn block_profiler(&self) -> BlockProfiler {
+        let mut profiler = BlockProfiler::default();
+        profiler += self.expired_sst_block_profiler;
+        if let Some(iter) = self.current.as_ref() {
+            profiler += iter.block_profiler();
+        }
+        profiler
+    }
+
+    fn reset_block_profiler(&mut self) {
+        self.expired_sst_block_profiler = BlockProfiler::default();
+        if let Some(iter) = self.current.as_mut() {
+            iter.reset_block_profiler()
+        }
     }
 }

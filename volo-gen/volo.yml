@@ -6,10 +6,6 @@ entries:
     services:
     idls:
       - source: local
-        path: ../idl/lsm_kv.proto
-        includes:
-          - ../idl
-      - source: local
-        path: ../idl/hello_world.proto
+        path: ../idl/plumedb.proto
         includes:
           - ../idl

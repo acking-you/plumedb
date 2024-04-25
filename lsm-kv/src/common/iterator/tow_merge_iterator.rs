@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use super::StorageIterator;
+use crate::common::profier::BlockProfiler;
 
 /// Merges two iterators of different types into one. If the two iterators have the same key, only
 /// produce the key once and prefer the entry from A.
@@ -92,5 +93,17 @@ impl<
 
     fn num_active_iterators(&self) -> usize {
         self.a.num_active_iterators() + self.b.num_active_iterators()
+    }
+
+    fn block_profiler(&self) -> BlockProfiler {
+        let mut profiler = BlockProfiler::default();
+        profiler += self.a.block_profiler();
+        profiler += self.b.block_profiler();
+        profiler
+    }
+
+    fn reset_block_profiler(&mut self) {
+        self.a.reset_block_profiler();
+        self.b.reset_block_profiler();
     }
 }

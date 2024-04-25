@@ -3,7 +3,9 @@
 use bytes::{BufMut, Bytes};
 
 use crate::common::key::{KeySlice, KeyVec};
-use crate::common::size::{ArrayLenType, KeyLenType, OffsetType, OverlapType, Size, ValueLenType};
+use crate::common::size::{
+    ArrayLenType, CheckSumType, KeyLenType, OffsetType, OverlapType, Size, ValueLenType,
+};
 
 /// A block is the smallest unit of read and caching in LSM tree. It is a collection of sorted
 /// key-value pairs.
@@ -43,6 +45,12 @@ impl Block {
         // retrieve data
         let data = data[0..offset_start].to_vec();
         Self { data, offsets }
+    }
+
+    /// The actual size of the block in the file.
+    #[inline]
+    pub fn block_size(&self) -> u64 {
+        (self.data.len() + self.offsets.len() + CheckSumType::RAW_SIZE) as u64
     }
 }
 

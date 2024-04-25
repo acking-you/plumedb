@@ -92,7 +92,7 @@ pub struct LsmStorageOptions<T: CompactionOptions> {
     pub enable_wal: bool,
 }
 
-fn range_overlap(
+pub(super) fn range_overlap(
     user_begin: Bound<&[u8]>,
     user_end: Bound<&[u8]>,
     table_begin: KeySlice,
@@ -119,7 +119,7 @@ fn range_overlap(
     true
 }
 
-fn key_within(user_key: &[u8], table_begin: KeySlice, table_end: KeySlice) -> bool {
+pub(super) fn key_within(user_key: &[u8], table_begin: KeySlice, table_end: KeySlice) -> bool {
     table_begin.raw_ref() <= user_key && user_key <= table_end.raw_ref()
 }
 
@@ -282,7 +282,7 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
         Ok(self.state.read().memtable.sync_wal()?)
     }
 
-    /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
+    /// Get a key from the storage
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         let snapshot = {
             let guard = self.state.read();
@@ -317,13 +317,7 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
                 table.first_key().as_key_slice(),
                 table.last_key().as_key_slice(),
             ) {
-                if let Some(bloom) = &table.bloom {
-                    if bloom.may_contain(farmhash::fingerprint32(key)) {
-                        return true;
-                    }
-                } else {
-                    return true;
-                }
+                return table.bloom.may_contain(farmhash::fingerprint32(key));
             }
             false
         };
@@ -402,7 +396,7 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
         self.write_batch(&[WriteBatchRecord::Del(key)])
     }
 
-    fn try_freeze(&self, estimated_size: usize) -> Result<()> {
+    pub(super) fn try_freeze(&self, estimated_size: usize) -> Result<()> {
         if estimated_size >= self.options.target_sst_size {
             let state_lock = self.state_lock.lock();
             let guard = self.state.read();

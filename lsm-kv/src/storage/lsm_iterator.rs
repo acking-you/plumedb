@@ -80,6 +80,14 @@ impl StorageIterator for LsmIterator {
     fn num_active_iterators(&self) -> usize {
         self.inner.num_active_iterators()
     }
+
+    fn block_profiler(&self) -> crate::common::profier::BlockProfiler {
+        self.inner.block_profiler()
+    }
+
+    fn reset_block_profiler(&mut self) {
+        self.inner.reset_block_profiler()
+    }
 }
 
 /// A wrapper around existing iterator, will prevent users from calling `next` when the iterator is
@@ -136,5 +144,13 @@ impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
 
     fn num_active_iterators(&self) -> usize {
         self.iter.num_active_iterators()
+    }
+
+    fn block_profiler(&self) -> crate::common::profier::BlockProfiler {
+        self.iter.block_profiler()
+    }
+
+    fn reset_block_profiler(&mut self) {
+        self.iter.reset_block_profiler()
     }
 }

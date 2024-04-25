@@ -8,6 +8,7 @@ use anyhow::{ensure, Result};
 
 use super::StorageIterator;
 use crate::common::key::KeySlice;
+use crate::common::profier::BlockProfiler;
 
 struct HeapWrapper<I: StorageIterator>(pub usize, pub Box<I>);
 
@@ -42,6 +43,7 @@ impl<I: StorageIterator> Ord for HeapWrapper<I> {
 pub struct MergeIterator<I: StorageIterator> {
     iters: BinaryHeap<HeapWrapper<I>>,
     current: Option<HeapWrapper<I>>,
+    removed_iter_profier: BlockProfiler,
 }
 
 impl<I: StorageIterator> MergeIterator<I> {
@@ -53,6 +55,7 @@ impl<I: StorageIterator> MergeIterator<I> {
             return Self {
                 iters: BinaryHeap::new(),
                 current: None,
+                removed_iter_profier: BlockProfiler::default(),
             };
         }
 
@@ -64,6 +67,7 @@ impl<I: StorageIterator> MergeIterator<I> {
             return Self {
                 iters: heap,
                 current: Some(HeapWrapper(0, iters.pop().unwrap())),
+                removed_iter_profier: BlockProfiler::default(),
             };
         }
 
@@ -79,6 +83,7 @@ impl<I: StorageIterator> MergeIterator<I> {
         Self {
             iters: heap,
             current: Some(current),
+            removed_iter_profier: BlockProfiler::default(),
         }
     }
 
@@ -125,12 +130,16 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
             if inner_iter.1.key() == current.1.key() {
                 // Case 1: an error occurred when calling `next`.
                 if let e @ Err(_) = inner_iter.1.next() {
+                    // do profier
+                    self.removed_iter_profier += inner_iter.1.block_profiler();
                     PeekMut::pop(inner_iter);
                     return e;
                 }
 
                 // Case 2: iter is no longer valid.
                 if !inner_iter.1.is_valid() {
+                    // do profier
+                    self.removed_iter_profier += inner_iter.1.block_profiler();
                     PeekMut::pop(inner_iter);
                 }
             } else {
@@ -143,6 +152,8 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
         // If the current iterator is invalid, pop it out of the heap and select the next one.
         if !current.1.is_valid() {
             if let Some(iter) = self.iters.pop() {
+                // do profier
+                self.removed_iter_profier += current.1.block_profiler();
                 *current = iter;
             }
             return Ok(());
@@ -151,6 +162,10 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
         // Otherwise, compare with heap top and swap if necessary.
         if let Some(mut inner_iter) = self.iters.peek_mut() {
             if *current < *inner_iter {
+                // do profiler
+                self.removed_iter_profier += current.1.block_profiler();
+                // Note that the iter is not deleted here, so take a reset of the profiler
+                current.1.reset_block_profiler();
                 std::mem::swap(&mut *inner_iter, current);
             }
         }
@@ -168,5 +183,21 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
                 .as_ref()
                 .map(|x| x.1.num_active_iterators())
                 .unwrap_or(0)
+    }
+
+    fn block_profiler(&self) -> BlockProfiler {
+        let mut profiler = BlockProfiler::default();
+        profiler += self.removed_iter_profier;
+        if let Some(current) = self.current.as_ref() {
+            profiler += current.1.block_profiler();
+        }
+        profiler
+    }
+
+    fn reset_block_profiler(&mut self) {
+        self.removed_iter_profier = BlockProfiler::default();
+        if let Some(current) = self.current.as_mut() {
+            current.1.reset_block_profiler()
+        }
     }
 }
