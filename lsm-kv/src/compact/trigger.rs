@@ -19,11 +19,11 @@ fn trigger_compaction<T: CompactionOptions>(storage: &LsmStorageInner<T>) -> Res
     let Some(task) = task else {
         return Ok(());
     };
-    tracing::info!("before compaction:{}", storage);
+    tracing::info!("before compaction:\n{}", storage.show_level_status());
     tracing::info!("running compaction task: {:?}", task);
     let sstables = task.compact(CompactionContext {
         sst_id_builder: &storage.sst_id_builder,
-        path: &storage.path,
+        path: &storage.folder,
         state: &snapshot,
         block_size: storage.options.block_size,
         target_sst_size: storage.options.target_sst_size,
@@ -37,7 +37,10 @@ fn trigger_compaction<T: CompactionOptions>(storage: &LsmStorageInner<T>) -> Res
         let mut new_sst_ids = Vec::new();
         for file_to_add in sstables {
             new_sst_ids.push(file_to_add.sst_id());
-            let result = snapshot.sstables.insert(file_to_add.sst_id(), file_to_add);
+            let result = snapshot
+                .sst_state
+                .sstables
+                .insert(file_to_add.sst_id(), file_to_add);
             assert!(result.is_none());
         }
         let (mut snapshot, files_to_remove) = storage
@@ -45,15 +48,15 @@ fn trigger_compaction<T: CompactionOptions>(storage: &LsmStorageInner<T>) -> Res
             .apply_compaction_result(&snapshot, &task, &output);
         let mut ssts_to_remove = Vec::with_capacity(files_to_remove.len());
         for file_to_remove in &files_to_remove {
-            let result = snapshot.sstables.remove(file_to_remove);
+            let result = snapshot.sst_state.sstables.remove(file_to_remove);
             assert!(result.is_some(), "cannot remove {}.sst", file_to_remove);
             ssts_to_remove.push(result.unwrap());
         }
         let mut state = storage.state.write();
         *state = Arc::new(snapshot);
         drop(state);
-        storage.path.sync_dir()?;
-        storage.manifest.as_ref().unwrap().add_record(
+        storage.folder.sync_dir()?;
+        storage.manifest.add_record(
             &state_lock,
             ManifestRecord::Compaction(task.to_json()?, new_sst_ids),
         )?;
@@ -66,9 +69,9 @@ fn trigger_compaction<T: CompactionOptions>(storage: &LsmStorageInner<T>) -> Res
         output
     );
     for sst in ssts_to_remove {
-        std::fs::remove_file(storage.path.path_of_sst(sst.sst_id()))?;
+        std::fs::remove_file(storage.folder.path_of_sst(sst.sst_id()))?;
     }
-    storage.path.sync_dir()?;
+    storage.folder.sync_dir()?;
 
     Ok(())
 }

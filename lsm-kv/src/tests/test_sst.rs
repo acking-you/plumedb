@@ -1,9 +1,11 @@
 use std::time::{Duration, Instant};
 
 use bytes::BufMut;
+use tabled::Table;
 use tempfile::tempdir;
 
 use super::common::INIT_TRACING;
+use crate::common::profier::ReadProfiler;
 use crate::compact::leveled::LeveledCompactionOptions;
 use crate::compact::CompactionOptions;
 use crate::storage::lsm_storage::LsmStorageOptions;
@@ -12,13 +14,14 @@ use crate::tests::common::dump_files_in_dir;
 
 #[test]
 fn test_simple_compacted_ssts_leveled() {
+    *INIT_TRACING;
     let ins = Instant::now();
     *INIT_TRACING;
     test_integration(LeveledCompactionOptions {
         level_size_multiplier: 2,
         level0_file_num_compaction_trigger: 2,
         max_levels: 3,
-        base_level_size_mb: 1,
+        base_level_size_bytes: 1 << 20, // 20MB
     });
     println!("cost time: {:?}", ins.elapsed());
 }
@@ -31,11 +34,12 @@ fn test_simple_compacted_ssts_leveled() {
 /// point where this function is called during manifest recovery.
 #[test]
 fn test_multiple_compacted_ssts_leveled() {
+    *INIT_TRACING;
     let compaction_options = LeveledCompactionOptions {
         level_size_multiplier: 4,
         level0_file_num_compaction_trigger: 2,
         max_levels: 2,
-        base_level_size_mb: 2,
+        base_level_size_bytes: 2,
     };
 
     let lsm_storage_options = LsmStorageOptions {
@@ -59,8 +63,8 @@ fn test_multiple_compacted_ssts_leveled() {
     while {
         std::thread::sleep(Duration::from_secs(1));
         let snapshot = storage.inner.state.read().clone();
-        let to_cont = prev_snapshot.levels != snapshot.levels
-            || prev_snapshot.l0_sstables != snapshot.l0_sstables;
+        let to_cont = prev_snapshot.sst_state.levels != snapshot.sst_state.levels
+            || prev_snapshot.sst_state.l0_sstables != snapshot.sst_state.l0_sstables;
         prev_snapshot = snapshot;
         to_cont
     } {
@@ -71,7 +75,7 @@ fn test_multiple_compacted_ssts_leveled() {
     assert!(storage.inner.state.read().memtable.is_empty());
     assert!(storage.inner.state.read().imm_memtables.is_empty());
 
-    println!("{storage}");
+    println!("{}", storage.show_level_status());
     drop(storage);
     dump_files_in_dir(&dir);
 
@@ -79,7 +83,15 @@ fn test_multiple_compacted_ssts_leveled() {
 
     for i in 0..500 {
         let (key, val) = key_value_pair_with_target_size(i, 20 * 1024);
-        assert_eq!(&storage.get(&key).unwrap().unwrap()[..], &val);
+        let mut profiler = ReadProfiler::default();
+        assert_eq!(
+            &storage
+                .get_with_profier(&mut profiler, &key)
+                .unwrap()
+                .unwrap()[..],
+            &val
+        );
+        tracing::info!("profiler:\n {}", Table::new([&profiler]).to_string());
     }
 }
 
@@ -127,7 +139,7 @@ fn test_integration(compaction_options: impl CompactionOptions) {
     // ensure all SSTs are flushed
     assert!(storage.inner.state.read().memtable.is_empty());
     assert!(storage.inner.state.read().imm_memtables.is_empty());
-    println!("{storage}");
+    println!("{}", storage.show_level_status());
     drop(storage);
     dump_files_in_dir(&dir);
 

@@ -17,7 +17,7 @@ fn test_integration_leveled_wal() {
         level_size_multiplier: 2,
         level0_file_num_compaction_trigger: 2,
         max_levels: 3,
-        base_level_size_mb: 1,
+        base_level_size_bytes: 1 << 20, // 20MB
     });
     println!("cost time:{:?}", time.elapsed())
 }
@@ -25,17 +25,16 @@ fn test_integration_leveled_wal() {
 fn test_integration(compaction_options: impl CompactionOptions) {
     let dir = tempdir().unwrap();
 
-    let mut options = LsmStorageOptions {
+    let options = LsmStorageOptions {
         block_size: 4096,
         target_sst_size: 1 << 20, // 1MB
         compaction_options,
-        enable_wal: false,
+        enable_wal: true,
         num_memtable_limit: 2,
     };
 
-    options.enable_wal = true;
     let storage = LsmKV::open(&dir, options.clone()).unwrap();
-    for i in 0..=20 {
+    for i in 0..=200 {
         storage.put(b"0", format!("v{}", i).as_bytes()).unwrap();
         if i % 2 == 0 {
             storage.put(b"1", format!("v{}", i).as_bytes()).unwrap();
@@ -58,12 +57,12 @@ fn test_integration(compaction_options: impl CompactionOptions) {
         !storage.inner.state.read().memtable.is_empty()
             || !storage.inner.state.read().imm_memtables.is_empty()
     );
-    println!("{storage}");
+    println!("{}", storage.show_level_status());
     drop(storage);
     dump_files_in_dir(&dir);
 
     let storage = LsmKV::open(&dir, options).unwrap();
-    assert_eq!(&storage.get(b"0").unwrap().unwrap()[..], b"v20".as_slice());
-    assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"v20".as_slice());
+    assert_eq!(&storage.get(b"0").unwrap().unwrap()[..], b"v200".as_slice());
+    assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"v200".as_slice());
     assert_eq!(storage.get(b"2").unwrap(), None);
 }

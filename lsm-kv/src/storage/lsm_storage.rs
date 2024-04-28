@@ -5,16 +5,18 @@ use std::ops::Bound;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use hashbrown::HashMap;
 use parking_lot::{Mutex, MutexGuard, RwLock};
+use tabled::Tabled;
 
+use super::super::common::profier::display_bytes;
 use super::lsm_iterator::{FusedIterator, LsmIterator};
 // use snafu::{ensure, ResultExt, Snafu};
 use super::manifest::{Manifest, ManifestRecord};
 use crate::common::cache::BlockCache;
-use crate::common::file::{FileObject, FilePath};
+use crate::common::file::{FileFolder, FileObject};
 use crate::common::id::{TableId, TableIdBuilder};
 use crate::common::iterator::concat_iterator::SstConcatIterator;
 use crate::common::iterator::merge_iterator::MergeIterator;
@@ -54,6 +56,12 @@ pub struct LsmStorageState {
     pub memtable: Arc<MemTable>,
     /// Immutable memtables, from latest to earliest.
     pub imm_memtables: Vec<Arc<MemTable>>,
+    pub sst_state: SstStorageState,
+}
+
+/// Represents the state of the SSTable.
+#[derive(Clone)]
+pub struct SstStorageState {
     /// L0 SSTs, from latest to earliest.
     pub l0_sstables: Vec<TableId>,
     /// SsTables sorted by key range; L1 - L_max for leveled compaction, or tiers for tiered
@@ -73,21 +81,26 @@ impl LsmStorageState {
         Self {
             memtable: Arc::new(MemTable::create(0.into())),
             imm_memtables: Vec::new(),
-            l0_sstables: Vec::new(),
-            levels: options.compaction_options.get_init_levels(),
-            sstables: Default::default(),
+            sst_state: SstStorageState {
+                l0_sstables: Vec::new(),
+                levels: options.compaction_options.get_init_levels(),
+                sstables: Default::default(),
+            },
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Tabled)]
 pub struct LsmStorageOptions<T: CompactionOptions> {
     // Block size in bytes
+    #[tabled(display_with("display_bytes"))]
     pub block_size: usize,
     // SST size in bytes, also the approximate memtable capacity limit
+    #[tabled(display_with("display_bytes"))]
     pub target_sst_size: usize,
     // Maximum number of memtables in memory, flush to L0 when exceeding this limit
     pub num_memtable_limit: usize,
+    #[tabled(skip)]
     pub compaction_options: T,
     pub enable_wal: bool,
 }
@@ -127,12 +140,12 @@ pub(super) fn key_within(user_key: &[u8], table_begin: KeySlice, table_end: KeyS
 pub(crate) struct LsmStorageInner<T: CompactionOptions> {
     pub(crate) state: Arc<RwLock<Arc<LsmStorageState>>>,
     pub(crate) state_lock: Mutex<()>,
-    pub(crate) path: FilePath,
+    pub(crate) folder: FileFolder,
     pub(crate) block_cache: Arc<BlockCache>,
     pub(crate) sst_id_builder: TableIdBuilder,
     pub(crate) options: Arc<LsmStorageOptions<T>>,
     pub(crate) compaction_controller: T::Controller,
-    pub(crate) manifest: Option<Manifest>,
+    pub(crate) manifest: Manifest,
 }
 
 impl<Options: CompactionOptions> LsmStorageInner<Options> {
@@ -150,8 +163,8 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
         if !path.exists() {
             std::fs::create_dir_all(path).context("failed to create DB dir")?;
         }
-        let manifest_path = path.join("MANIFEST");
-        let path = FilePath::new(path);
+        let folder = FileFolder::new(path);
+        let manifest_path = folder.path_of_manifest();
 
         let mut next_sst_id: TableId = 1.into();
         let mut state = LsmStorageState::create(options);
@@ -164,7 +177,7 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
             if options.enable_wal {
                 state.memtable = Arc::new(MemTable::create_with_wal(
                     state.memtable.id(),
-                    path.path_of_wal(state.memtable.id()),
+                    folder.path_of_wal(state.memtable.id()),
                 )?);
             }
             manifest = Manifest::create(&manifest_path).context("failed to create manifest")?;
@@ -178,9 +191,9 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
                         let res = memtables.remove(&sst_id);
                         assert!(res, "memtable not exist?");
                         if Options::Controller::FLUSH_TO_L0 {
-                            state.l0_sstables.insert(0, sst_id);
+                            state.sst_state.l0_sstables.insert(0, sst_id);
                         } else {
-                            state.levels.insert(0, (sst_id, vec![sst_id]));
+                            state.sst_state.levels.insert(0, (sst_id, vec![sst_id]));
                         }
                         next_sst_id = next_sst_id.max(sst_id);
                     }
@@ -203,17 +216,18 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
             let mut sst_cnt = 0;
             // recover SSTs
             for &table_id in state
+                .sst_state
                 .l0_sstables
                 .iter()
-                .chain(state.levels.iter().flat_map(|(_, files)| files))
+                .chain(state.sst_state.levels.iter().flat_map(|(_, files)| files))
             {
                 let sst = SsTable::open(
                     table_id,
                     Some(block_cache.clone()),
-                    FileObject::open(path.path_of_sst(table_id))
+                    FileObject::open(folder.path_of_sst(table_id))
                         .with_context(|| format!("failed to open SST: {:?}", table_id))?,
                 )?;
-                state.sstables.insert(table_id, Arc::new(sst));
+                state.sst_state.sstables.insert(table_id, Arc::new(sst));
                 sst_cnt += 1;
             }
             tracing::info!("{} SSTs opened", sst_cnt);
@@ -222,15 +236,17 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
 
             // Sort SSTs on each level when it is leveled strategy
             if let CompactionType::Leveled = Options::COMPACTION_TYPE {
-                for (_, ssts) in &mut state.levels {
+                for (_, ssts) in &mut state.sst_state.levels {
                     ssts.sort_by(|x, y| {
                         state
+                            .sst_state
                             .sstables
                             .get(x)
                             .expect("table id must exist")
                             .first_key()
                             .cmp(
                                 state
+                                    .sst_state
                                     .sstables
                                     .get(y)
                                     .expect("table id must exist")
@@ -244,7 +260,7 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
             if options.enable_wal {
                 let mut wal_cnt = 0;
                 for &id in memtables.iter() {
-                    let memtable = MemTable::recover_from_wal(id, path.path_of_wal(id))?;
+                    let memtable = MemTable::recover_from_wal(id, folder.path_of_wal(id))?;
                     if !memtable.is_empty() {
                         state.imm_memtables.insert(0, Arc::new(memtable));
                         wal_cnt += 1;
@@ -253,7 +269,7 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
                 tracing::info!("{} WALs recovered", wal_cnt);
                 state.memtable = Arc::new(MemTable::create_with_wal(
                     next_sst_id,
-                    path.path_of_wal(next_sst_id),
+                    folder.path_of_wal(next_sst_id),
                 )?);
             } else {
                 state.memtable = Arc::new(MemTable::create(next_sst_id));
@@ -266,14 +282,14 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
         let storage = Self {
             state: Arc::new(RwLock::new(Arc::new(state))),
             state_lock: Mutex::new(()),
-            path,
+            folder,
             block_cache,
             sst_id_builder: TableIdBuilder::new(next_sst_id),
             compaction_controller,
-            manifest: Some(manifest),
+            manifest,
             options: Arc::new(options.clone()),
         };
-        storage.path.sync_dir()?;
+        storage.folder.sync_dir()?;
 
         Ok(storage)
     }
@@ -309,7 +325,7 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
             }
         }
 
-        let mut l0_iters = Vec::with_capacity(snapshot.l0_sstables.len());
+        let mut l0_iters = Vec::with_capacity(snapshot.sst_state.l0_sstables.len());
 
         let keep_table = |key: &[u8], table: &SsTable| {
             if key_within(
@@ -322,8 +338,8 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
             false
         };
 
-        for table in snapshot.l0_sstables.iter() {
-            let table = snapshot.sstables[table].clone();
+        for table in snapshot.sst_state.l0_sstables.iter() {
+            let table = snapshot.sst_state.sstables[table].clone();
             if keep_table(key, &table) {
                 l0_iters.push(Box::new(SsTableIterator::create_and_seek_to_key(
                     table,
@@ -332,11 +348,11 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
             }
         }
         let l0_iter = MergeIterator::create(l0_iters);
-        let mut level_iters = Vec::with_capacity(snapshot.levels.len());
-        for (_, level_sst_ids) in &snapshot.levels {
+        let mut level_iters = Vec::with_capacity(snapshot.sst_state.levels.len());
+        for (_, level_sst_ids) in &snapshot.sst_state.levels {
             let mut level_ssts = Vec::with_capacity(level_sst_ids.len());
             for table in level_sst_ids {
-                let table = snapshot.sstables[table].clone();
+                let table = snapshot.sst_state.sstables[table].clone();
                 if keep_table(key, &table) {
                     level_ssts.push(table);
                 }
@@ -430,21 +446,21 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
     pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
         let memtable_id = self.next_sst_id();
         let memtable = if self.options.enable_wal {
-            Arc::new(MemTable::create_with_wal(
-                memtable_id,
-                self.path.path_of_wal(memtable_id),
-            )?)
+            Arc::new(
+                MemTable::create_with_wal(memtable_id, self.folder.path_of_wal(memtable_id))
+                    .map_err(|e| anyhow!("{}", snafu::Report::from_error(e)))?,
+            )
         } else {
             Arc::new(MemTable::create(memtable_id))
         };
 
         self.freeze_memtable_with_memtable(memtable)?;
 
-        self.manifest.as_ref().unwrap().add_record(
+        self.manifest.add_record(
             state_lock_observer,
             ManifestRecord::NewMemtable(memtable_id),
         )?;
-        self.path.sync_dir()?;
+        self.folder.sync_dir()?;
 
         Ok(())
     }
@@ -470,7 +486,7 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
         let sst = Arc::new(builder.build(
             sst_id,
             Some(self.block_cache.clone()),
-            self.path.path_of_sst(sst_id),
+            self.folder.path_of_sst(sst_id),
         )?);
 
         // Add the flushed L0 table to the list.
@@ -483,27 +499,25 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
             // Add L0 table
             if Options::Controller::FLUSH_TO_L0 {
                 // In leveled compaction or no compaction, simply flush to L0
-                snapshot.l0_sstables.insert(0, sst_id);
+                snapshot.sst_state.l0_sstables.insert(0, sst_id);
             } else {
                 // In tiered compaction, create a new tier
-                snapshot.levels.insert(0, (sst_id, vec![sst_id]));
+                snapshot.sst_state.levels.insert(0, (sst_id, vec![sst_id]));
             }
             tracing::info!("flushed {}.sst with size={}", sst_id, sst.table_size());
-            snapshot.sstables.insert(sst_id, sst);
+            snapshot.sst_state.sstables.insert(sst_id, sst);
             // Update the snapshot.
             *guard = Arc::new(snapshot);
         }
 
         if self.options.enable_wal {
-            std::fs::remove_file(self.path.path_of_wal(sst_id))?;
+            std::fs::remove_file(self.folder.path_of_wal(sst_id))?;
         }
 
         self.manifest
-            .as_ref()
-            .unwrap()
             .add_record(&state_lock, ManifestRecord::Flush(sst_id))?;
 
-        self.path.sync_dir()?;
+        self.folder.sync_dir()?;
 
         Ok(())
     }
@@ -526,9 +540,9 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
         }
         let memtable_iter = MergeIterator::create(memtable_iters);
 
-        let mut table_iters = Vec::with_capacity(snapshot.l0_sstables.len());
-        for table_id in snapshot.l0_sstables.iter() {
-            let table = snapshot.sstables[table_id].clone();
+        let mut table_iters = Vec::with_capacity(snapshot.sst_state.l0_sstables.len());
+        for table_id in snapshot.sst_state.l0_sstables.iter() {
+            let table = snapshot.sst_state.sstables[table_id].clone();
             if range_overlap(
                 lower,
                 upper,
@@ -557,11 +571,11 @@ impl<Options: CompactionOptions> LsmStorageInner<Options> {
         }
 
         let l0_iter = MergeIterator::create(table_iters);
-        let mut level_iters = Vec::with_capacity(snapshot.levels.len());
-        for (_, level_sst_ids) in &snapshot.levels {
+        let mut level_iters = Vec::with_capacity(snapshot.sst_state.levels.len());
+        for (_, level_sst_ids) in &snapshot.sst_state.levels {
             let mut level_ssts = Vec::with_capacity(level_sst_ids.len());
             for table in level_sst_ids {
-                let table = snapshot.sstables[table].clone();
+                let table = snapshot.sst_state.sstables[table].clone();
                 if range_overlap(
                     lower,
                     upper,

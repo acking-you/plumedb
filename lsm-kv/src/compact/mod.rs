@@ -3,13 +3,13 @@ pub mod leveled;
 pub mod trigger;
 pub mod utils;
 
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::sync::Arc;
 
 use anyhow::Result;
 
 use crate::common::cache::BlockCache;
-use crate::common::file::FilePath;
+use crate::common::file::FileFolder;
 use crate::common::id::{TableId, TableIdBuilder};
 use crate::storage::lsm_storage::LsmStorageState;
 use crate::table::sstable::SsTable;
@@ -28,6 +28,15 @@ pub trait CompactionTask: Debug + Clone + Send + Sync + 'static {
 pub enum CompactionType {
     Leveled,
     Tiered,
+}
+
+impl Display for CompactionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompactionType::Leveled => write!(f, "Leveled"),
+            CompactionType::Tiered => write!(f, "Tiered"),
+        }
+    }
 }
 
 /// Leveled compaction must implement this trait
@@ -65,7 +74,7 @@ pub trait TieredCompactionGetter {
 pub trait CompactionOptionsGetter: LeveledCompactionGetter + TieredCompactionGetter {}
 
 pub trait CompactionOptions:
-    CompactionOptionsGetter + Debug + Clone + Send + Sync + 'static
+    CompactionOptionsGetter + Debug + Clone + Send + Sync + Display + 'static
 {
     type Controller: CompactionController<Option = Self, Task = Self::Task>;
 
@@ -110,7 +119,7 @@ pub struct CompactionContext<'a> {
     // SSt id builder
     sst_id_builder: &'a TableIdBuilder,
     // filepath builder
-    path: &'a FilePath,
+    path: &'a FileFolder,
     state: &'a LsmStorageState,
     // Block size in bytes
     block_size: usize,

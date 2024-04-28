@@ -9,43 +9,126 @@ message KeyValePair{
 
 message FillReq{
     repeated KeyValePair pairs = 1;
+    bool query_profiler = 2;
 }
 
 message FillResp{
-    uint32 filled_num = 1;
-    uint64 query_time = 2;
+    uint64 query_time = 1;
+    string query_id = 2;
+    optional string profiler = 3;
 }
 
 message GetReq{
     bytes key = 1;
-}
-
-enum ReadStatus{
-    MEM_TABLE = 0;
-    L0_TABLE = 1;
-    BLOCK_CACHE = 2;
-    BLOCK = 3;
+    bool query_profiler = 2;
 }
 
 message GetResp{
-    bytes value = 1;
-    ReadStatus status = 2;
-    uint64 query_time = 3;
+    optional bytes value = 1;
+    uint64 query_time = 2;
+    string query_id = 3;
+    optional string profiler = 4;
+}
+
+message Unbounded{}
+
+message Bound{
+    oneof Value{
+        Unbounded unbouned = 1;
+        bytes include = 2;
+        bytes exclude = 3;
+    }
 }
 
 message ScanReq{
-    bytes start = 1;
-    bytes end = 2;
+    Bound upper = 1;
+    Bound lower = 2;
+    bool query_profiler = 3;
 }
 
 message ScanResp{
+    repeated KeyValePair pairs = 1;
+    uint64 query_time = 2;
+    string query_id = 3;
+    optional string profiler = 4;
+}
+
+message KeysReq{
+    Bound upper = 1;
+    Bound lower = 2;
+    bool query_profiler = 3;
+}
+
+message KeysResp{
+    repeated bytes keys = 1;
+    uint64 query_time = 2;
+    string query_id = 3;
+    optional string profiler = 4;
+}
+
+message DelReq{
+    bytes key = 1;
+    bool query_profiler = 2;
+}
+
+message DelResp{
+    uint64 query_time = 1;
+    string query_id = 2;
+    optional string profiler = 3;
+}
+
+enum StatusType{
+   MEMTABLE = 0;
+   SST = 1;
+   LEVEL = 2;
+   OPTIONS = 3;
+   FILES = 4;
+}
+
+message ShowReq{
+    StatusType status = 1;
+}
+
+message ShowResp{
+    string status_graph = 1;
+    uint64 query_time = 2;
+    string query_id = 3;
+}
+
+message SubcribeReq{
+    string channel = 1;
+    bool fetch_prev = 2;
+}
+
+message FetchedValue{
     repeated bytes values = 1;
-    uint32 cache_hit =2;
-    uint64 query_time = 3;
+}
+
+message SubcribeResp{
+    optional FetchedValue fetched_value = 1;
+    uint64 query_time = 2;
+    string query_id = 3;
+}
+
+message PublishReq{
+    string channel = 1;
+    repeated bytes value = 2;
+    bool profiler = 3;
+}
+
+message PublishResp{
+    uint64 query_time = 1;
+    string query_id = 2;
+    optional string profiler = 3;
 }
 
 service LsmKVService {
     rpc fill(FillReq) returns (FillResp);
     rpc get(GetReq) returns (GetResp);
+    rpc delete(DelReq) returns (DelResp);
     rpc scan(ScanReq) returns (ScanResp);
+    rpc keys(KeysReq) returns (KeysResp);
+    rpc show(ShowReq) returns (ShowResp);
+    rpc subcribe(SubcribeReq) returns (SubcribeResp);
+    rpc publish(PublishReq) returns (PublishResp);
 }

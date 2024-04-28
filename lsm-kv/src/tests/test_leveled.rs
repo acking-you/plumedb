@@ -19,7 +19,7 @@ fn test_integration() {
         compaction_options: LeveledCompactionOptions {
             level0_file_num_compaction_trigger: 2,
             level_size_multiplier: 2,
-            base_level_size_mb: 1,
+            base_level_size_bytes: 1 << 20, // 1MB
             max_levels: 4,
         },
         enable_wal: false,

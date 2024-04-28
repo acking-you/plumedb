@@ -5,9 +5,12 @@ use std::ops::{Add, AddAssign};
 use std::sync::atomic::AtomicUsize;
 
 use serde::{Deserialize, Serialize};
+use tabled::Tabled;
 
 /// Represents sst_id or memtable_id
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default, Tabled,
+)]
 pub struct TableId(usize);
 
 impl Debug for TableId {

@@ -1,9 +1,10 @@
 //! Some file-related wrappers
 
+use std::fmt::Display;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::id::TableId;
 
@@ -44,11 +45,27 @@ impl FileObject {
 
 /// Provide file paths to get different types of files
 #[derive(Debug, Clone)]
-pub struct FilePath(PathBuf);
+pub struct FileFolder(PathBuf);
 
-impl FilePath {
+impl Display for FileFolder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+pub const WAL_EXT: &str = "wal";
+pub const SST_EXT: &str = "sst";
+pub const MANIFEST_NAME: &str = "MANIFEST";
+
+impl FileFolder {
     pub fn exists(&self) -> bool {
         self.0.exists()
+    }
+
+    pub fn read_dir(&self) -> anyhow::Result<std::fs::ReadDir> {
+        self.0
+            .read_dir()
+            .with_context(|| format!("failed raed_dir with path:{}", self.0.display()))
     }
 
     /// New filepath
@@ -57,7 +74,7 @@ impl FilePath {
     }
 
     fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
-        path.as_ref().join(format!("{:05}.sst", id))
+        path.as_ref().join(format!("{:05}.{}", id, SST_EXT))
     }
 
     /// get sst file path
@@ -65,8 +82,12 @@ impl FilePath {
         Self::path_of_sst_static(&self.0, id.into())
     }
 
+    pub fn path_of_manifest(&self) -> PathBuf {
+        self.0.join(MANIFEST_NAME)
+    }
+
     fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
-        path.as_ref().join(format!("{:05}.wal", id))
+        path.as_ref().join(format!("{:05}.{}", id, WAL_EXT))
     }
 
     /// get wal file path

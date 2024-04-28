@@ -2,7 +2,7 @@
 pub mod lsm_iterator;
 pub mod lsm_storage;
 pub mod manifest;
-pub mod profier;
+pub mod profiler;
 
 use std::ops::Bound;
 use std::path::Path;
@@ -40,7 +40,7 @@ impl<T: CompactionOptions> Drop for LsmKV<T> {
 
 impl<Options: CompactionOptions> LsmKV<Options> {
     pub fn close(&self) -> anyhow::Result<()> {
-        self.inner.path.sync_dir()?;
+        self.inner.folder.sync_dir()?;
         self.compaction_notifier.send(()).ok();
         self.flush_notifier.send(()).ok();
 
@@ -59,7 +59,7 @@ impl<Options: CompactionOptions> LsmKV<Options> {
 
         if self.inner.options.enable_wal {
             self.inner.sync()?;
-            self.inner.path.sync_dir()?;
+            self.inner.folder.sync_dir()?;
             return Ok(());
         }
 
@@ -77,7 +77,7 @@ impl<Options: CompactionOptions> LsmKV<Options> {
         } {
             self.inner.force_flush_next_imm_memtable()?;
         }
-        self.inner.path.sync_dir()?;
+        self.inner.folder.sync_dir()?;
 
         Ok(())
     }

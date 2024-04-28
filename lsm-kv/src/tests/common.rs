@@ -90,8 +90,8 @@ pub fn compaction_bench<T: CompactionOptions>(storage: Arc<LsmKV<T>>) {
     while {
         std::thread::sleep(Duration::from_secs(1));
         let snapshot = storage.inner.state.read().clone();
-        let to_cont = prev_snapshot.levels != snapshot.levels
-            || prev_snapshot.l0_sstables != snapshot.l0_sstables;
+        let to_cont = prev_snapshot.sst_state.levels != snapshot.sst_state.levels
+            || prev_snapshot.sst_state.l0_sstables != snapshot.sst_state.l0_sstables;
         prev_snapshot = snapshot;
         to_cont
     } {
@@ -116,7 +116,7 @@ pub fn compaction_bench<T: CompactionOptions>(storage: Arc<LsmKV<T>>) {
         expected_key_value_pairs,
     );
 
-    println!("{storage}");
+    println!("{}", storage.show_level_status());
 
     println!(
         "This test case does not guarantee your compaction algorithm produces a LSM state as \
@@ -129,12 +129,20 @@ pub fn check_compaction_ratio<T: CompactionOptions>(storage: Arc<LsmKV<T>>) {
     let state = storage.inner.state.read().clone();
     let mut level_size = Vec::new();
     let options = &storage.inner.options.compaction_options;
-    let l0_sst_num = state.l0_sstables.len();
-    for (_, files) in &state.levels {
+    let l0_sst_num = state.sst_state.l0_sstables.len();
+    for (_, files) in &state.sst_state.levels {
         let size = match T::COMPACTION_TYPE {
             CompactionType::Leveled => files
                 .iter()
-                .map(|x| state.sstables.get(x).as_ref().unwrap().table_size() as u64)
+                .map(|x| {
+                    state
+                        .sst_state
+                        .sstables
+                        .get(x)
+                        .as_ref()
+                        .unwrap()
+                        .table_size() as u64
+                })
                 .sum::<u64>(),
             CompactionType::Tiered => files.len() as u64,
         };
@@ -164,7 +172,7 @@ pub fn check_compaction_ratio<T: CompactionOptions>(storage: Arc<LsmKV<T>>) {
                     // filters...
                     this_size as f64 / last_level_size as f64 <= 1.0 / multiplier + 0.5,
                     "L{}/L_max, {}/{}>>1.0/{}",
-                    state.levels[idx - 1].0,
+                    state.sst_state.levels[idx - 1].0,
                     this_size,
                     last_level_size,
                     multiplier
@@ -192,8 +200,8 @@ pub fn check_compaction_ratio<T: CompactionOptions>(storage: Arc<LsmKV<T>>) {
                     assert!(
                         sum_size as f64 / this_size as f64 <= size_ratio_trigger,
                         "violation of size ratio: sum(⬆️L{})/L{}, {}/{}>{}",
-                        state.levels[idx - 1].0,
-                        state.levels[idx].0,
+                        state.sst_state.levels[idx - 1].0,
+                        state.sst_state.levels[idx].0,
                         sum_size,
                         this_size,
                         size_ratio_trigger
@@ -204,8 +212,8 @@ pub fn check_compaction_ratio<T: CompactionOptions>(storage: Arc<LsmKV<T>>) {
                         sum_size as f64 / this_size as f64
                             <= max_size_amplification_percent as f64 / 100.0,
                         "violation of space amp: sum(⬆️L{})/L{}, {}/{}>{}%",
-                        state.levels[idx - 1].0,
-                        state.levels[idx].0,
+                        state.sst_state.levels[idx - 1].0,
+                        state.sst_state.levels[idx].0,
                         sum_size,
                         this_size,
                         max_size_amplification_percent

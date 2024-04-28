@@ -1,8 +1,11 @@
 use std::collections::HashSet;
+use std::fmt::Display;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use tabled::{Table, Tabled};
 
+use super::super::common::profier::display_bytes;
 use super::utils::compact_generate_sst_from_iter;
 use super::{
     CompactionController, CompactionOptions, CompactionOptionsGetter, CompactionTask,
@@ -40,6 +43,7 @@ impl CompactionTask for LeveledCompactionTask {
                 for id in self.upper_level_sst_ids.iter() {
                     upper_ssts.push(
                         ctx.state
+                            .sst_state
                             .sstables
                             .get(id)
                             .with_context(|| {
@@ -53,6 +57,7 @@ impl CompactionTask for LeveledCompactionTask {
                 for id in self.lower_level_sst_ids.iter() {
                     lower_ssts.push(
                         ctx.state
+                            .sst_state
                             .sstables
                             .get(id)
                             .with_context(|| {
@@ -74,6 +79,7 @@ impl CompactionTask for LeveledCompactionTask {
                 for id in self.upper_level_sst_ids.iter() {
                     upper_iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
                         ctx.state
+                            .sst_state
                             .sstables
                             .get(id)
                             .with_context(|| {
@@ -89,6 +95,7 @@ impl CompactionTask for LeveledCompactionTask {
                 for id in self.lower_level_sst_ids.iter() {
                     lower_ssts.push(
                         ctx.state
+                            .sst_state
                             .sstables
                             .get(id)
                             .with_context(|| {
@@ -119,12 +126,20 @@ impl CompactionTask for LeveledCompactionTask {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Tabled)]
 pub struct LeveledCompactionOptions {
     pub level_size_multiplier: usize,
     pub level0_file_num_compaction_trigger: usize,
     pub max_levels: usize,
-    pub base_level_size_mb: usize,
+    #[tabled(display_with("display_bytes"))]
+    pub base_level_size_bytes: usize,
+}
+
+/// impl `Display` for profiler
+impl Display for LeveledCompactionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", Table::new([self]))
+    }
 }
 
 impl LeveledCompactionGetter for LeveledCompactionOptions {
@@ -141,7 +156,7 @@ impl LeveledCompactionGetter for LeveledCompactionOptions {
     }
 
     fn get_base_level_size_mb(&self) -> usize {
-        self.base_level_size_mb
+        self.base_level_size_bytes
     }
 }
 impl TieredCompactionGetter for LeveledCompactionOptions {}
@@ -184,11 +199,12 @@ impl CompactionController for LeveledCompactionController {
         let mut base_level = self.options.max_levels;
         for i in 0..self.options.max_levels {
             real_level_size.push(
-                snapshot.levels[i]
+                snapshot.sst_state.levels[i]
                     .1
                     .iter()
                     .map(|x| {
                         snapshot
+                            .sst_state
                             .sstables
                             .get(x)
                             .expect("sstable get nerver fails")
@@ -197,7 +213,7 @@ impl CompactionController for LeveledCompactionController {
                     .sum(),
             );
         }
-        let base_level_size_bytes = self.options.base_level_size_mb * 1024 * 1024;
+        let base_level_size_bytes = self.options.base_level_size_bytes;
 
         // select base level and compute target level size
         target_level_size[self.options.max_levels - 1] =
@@ -214,15 +230,15 @@ impl CompactionController for LeveledCompactionController {
         }
 
         // Flush L0 SST is the top priority
-        if snapshot.l0_sstables.len() >= self.options.level0_file_num_compaction_trigger {
+        if snapshot.sst_state.l0_sstables.len() >= self.options.level0_file_num_compaction_trigger {
             tracing::info!("flush L0 SST to base level {}", base_level);
             return Some(LeveledCompactionTask {
                 upper_level: None,
-                upper_level_sst_ids: snapshot.l0_sstables.clone(),
+                upper_level_sst_ids: snapshot.sst_state.l0_sstables.clone(),
                 lower_level: base_level,
                 lower_level_sst_ids: self.find_overlapping_ssts(
                     snapshot,
-                    &snapshot.l0_sstables,
+                    &snapshot.sst_state.l0_sstables,
                     base_level,
                 ),
                 is_lower_level_bottom_level: base_level == self.options.max_levels,
@@ -243,17 +259,22 @@ impl CompactionController for LeveledCompactionController {
                 "target level sizes: {:?}, real level sizes: {:?}, base_level: {}",
                 target_level_size
                     .iter()
-                    .map(|x| format!("{:.3}MB", *x as f64 / 1024.0 / 1024.0))
+                    .map(display_bytes)
                     .collect::<Vec<_>>(),
                 real_level_size
                     .iter()
-                    .map(|x| format!("{:.3}MB", *x as f64 / 1024.0 / 1024.0))
+                    .map(display_bytes)
                     .collect::<Vec<_>>(),
                 base_level,
             );
 
             let level = *level;
-            let selected_sst = snapshot.levels[level - 1].1.iter().min().copied().unwrap(); // select the oldest sst to compact
+            let selected_sst = snapshot.sst_state.levels[level - 1]
+                .1
+                .iter()
+                .min()
+                .copied()
+                .unwrap(); // select the oldest sst to compact
             tracing::info!(
                 "compaction triggered by priority: {level} out of {:?}, select {selected_sst} for \
                  compaction",
@@ -306,19 +327,19 @@ impl LeveledCompactionController {
     ) -> Vec<TableId> {
         let begin_key = sst_ids
             .iter()
-            .map(|id| snapshot.sstables[id].first_key())
+            .map(|id| snapshot.sst_state.sstables[id].first_key())
             .min()
             .cloned()
             .expect("sst id must exist");
         let end_key = sst_ids
             .iter()
-            .map(|id| snapshot.sstables[id].last_key())
+            .map(|id| snapshot.sst_state.sstables[id].last_key())
             .max()
             .cloned()
             .expect("sst id must exist");
         let mut overlap_ssts = Vec::new();
-        for sst_id in &snapshot.levels[in_level - 1].1 {
-            let sst = &snapshot.sstables[sst_id];
+        for sst_id in &snapshot.sst_state.levels[in_level - 1].1 {
+            let sst = &snapshot.sst_state.sstables[sst_id];
             let first_key = sst.first_key();
             let last_key = sst.last_key();
             if !(last_key < &begin_key || first_key > &end_key) {
@@ -347,7 +368,7 @@ impl LeveledCompactionController {
             .copied()
             .collect::<HashSet<_>>();
         if let Some(upper_level) = task.upper_level {
-            let new_upper_level_ssts = snapshot.levels[upper_level - 1]
+            let new_upper_level_ssts = snapshot.sst_state.levels[upper_level - 1]
                 .1
                 .iter()
                 .filter_map(|x| {
@@ -358,9 +379,10 @@ impl LeveledCompactionController {
                 })
                 .collect::<Vec<_>>();
             assert!(upper_level_sst_ids_set.is_empty());
-            snapshot.levels[upper_level - 1].1 = new_upper_level_ssts;
+            snapshot.sst_state.levels[upper_level - 1].1 = new_upper_level_ssts;
         } else {
             let new_l0_ssts = snapshot
+                .sst_state
                 .l0_sstables
                 .iter()
                 .filter_map(|x| {
@@ -371,13 +393,13 @@ impl LeveledCompactionController {
                 })
                 .collect::<Vec<_>>();
             assert!(upper_level_sst_ids_set.is_empty());
-            snapshot.l0_sstables = new_l0_ssts;
+            snapshot.sst_state.l0_sstables = new_l0_ssts;
         }
 
         files_to_remove.extend(&task.upper_level_sst_ids);
         files_to_remove.extend(&task.lower_level_sst_ids);
 
-        let mut new_lower_level_ssts = snapshot.levels[task.lower_level - 1]
+        let mut new_lower_level_ssts = snapshot.sst_state.levels[task.lower_level - 1]
             .1
             .iter()
             .filter_map(|x| {
@@ -397,12 +419,14 @@ impl LeveledCompactionController {
             // obtain the Lower Level portion for merging
             new_lower_level_ssts.sort_by(|x, y| {
                 snapshot
+                    .sst_state
                     .sstables
                     .get(x)
                     .expect("sst must exist")
                     .first_key()
                     .cmp(
                         snapshot
+                            .sst_state
                             .sstables
                             .get(y)
                             .expect("sst must exist")
@@ -411,7 +435,7 @@ impl LeveledCompactionController {
             });
         }
 
-        snapshot.levels[task.lower_level - 1].1 = new_lower_level_ssts;
+        snapshot.sst_state.levels[task.lower_level - 1].1 = new_lower_level_ssts;
         (snapshot, files_to_remove)
     }
 }
