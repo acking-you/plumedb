@@ -56,19 +56,24 @@ jobs:
           # Make Rust compile to our target (defined in the matrix)
           toolchain: nightly
           targets: ${{ matrix.target }}
+
       - name: Build server
+        if: matrix.os != 'windows-latest'
         uses: actions-rs/cargo@v1
         with:
           use-cross: true
           command: build
           args: --bin server --verbose --release --target ${{ matrix.target }}
+
       - name: Build client
         uses: actions-rs/cargo@v1
         with:
           use-cross: true
           command: build
           args: --bin client --verbose --release --target ${{ matrix.target }}
+
       - name: Archive server
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           # Replace with the name of your binary
@@ -89,6 +94,7 @@ jobs:
             tar -czf "$dirname.tar.gz" "$dirname"
             echo "CLI_ASSET=$dirname.tar.gz" >> $GITHUB_ENV
           fi
+
       - name: Archive client
         shell: bash
         run: |
