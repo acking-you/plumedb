@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use colored::Colorize;
+use crossterm::cursor;
 use futures::StreamExt;
 use mimalloc_rust::GlobalMiMalloc;
 use nu_pretty_hex::PrettyHex;
@@ -151,7 +152,8 @@ async fn main() {
                 }
                 if &buffer == "clear" {
                     let clear = crossterm::terminal::Clear(crossterm::terminal::ClearType::All);
-                    println!("{clear}");
+                    let cursor = cursor::MoveTo(0, 0);
+                    println!("{clear}{cursor}");
                     continue;
                 }
                 match parse_common_op(&buffer) {
