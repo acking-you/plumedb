@@ -4,13 +4,13 @@ use std::time::Duration;
 use clap::Parser;
 use colored::Colorize;
 use futures::StreamExt;
-use plumedb::common::config::init_tracing;
 use mimalloc_rust::GlobalMiMalloc;
 use nu_pretty_hex::PrettyHex;
 use once_cell::sync::Lazy;
 use pilota::Bytes;
 use plumedb::cli::parser::{parse_common_op, BasicOp, ChannelOp, CommonOp, ShowItem};
 use plumedb::cli::repl::get_repl;
+use plumedb::common::config::init_tracing;
 use reedline::{DefaultPrompt, DefaultPromptSegment, Signal};
 use volo::FastStr;
 use volo_gen::plumedb::{
@@ -99,6 +99,11 @@ fn print_string_or_hex(bytes: &[u8]) {
 #[volo::main]
 async fn main() {
     init_tracing::<true>();
+    let cli = Cli::parse();
+    if let Some(a) = cli.server_addr {
+        std::env::set_var(PLUME_CLIENT_ADDR_ENV, a);
+    }
+
     let resp = CLIENT
         .show(Request::new(ShowReq {
             status: volo_gen::plumedb::StatusType::Options,
@@ -112,10 +117,7 @@ async fn main() {
     } = resp.into_inner();
     println!("\n Your LSM-Tree options:\n{status_graph}");
     print_query_time_with_id(query_time, &query_id);
-    let cli = Cli::parse();
-    if let Some(a) = cli.server_addr {
-        std::env::set_var(PLUME_CLIENT_ADDR_ENV, a);
-    }
+
     let mut line_editor = get_repl().expect("get repl never fails");
     let prompt = DefaultPrompt {
         left_prompt: DefaultPromptSegment::Basic("🤗✨🧨 >>".into()),
