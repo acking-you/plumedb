@@ -1,11 +1,10 @@
 use std::time::{Duration, Instant};
 
 use bytes::BufMut;
-use tabled::Table;
 use tempfile::tempdir;
 
 use super::common::INIT_TRACING;
-use crate::common::profier::ReadProfiler;
+use crate::common::profier::{get_format_tabled, ReadProfiler};
 use crate::compact::leveled::LeveledCompactionOptions;
 use crate::compact::CompactionOptions;
 use crate::storage::lsm_storage::LsmStorageOptions;
@@ -91,7 +90,7 @@ fn test_multiple_compacted_ssts_leveled() {
                 .unwrap()[..],
             &val
         );
-        tracing::info!("profiler:\n {}", Table::new([&profiler]).to_string());
+        tracing::info!("profiler:\n {}", get_format_tabled(profiler).to_string());
     }
 }
 

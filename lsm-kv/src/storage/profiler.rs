@@ -5,8 +5,8 @@ use anyhow::anyhow;
 use bytes::Bytes;
 use parking_lot::MutexGuard;
 use tabled::builder::Builder;
-use tabled::settings::Panel;
-use tabled::{Table, Tabled};
+use tabled::settings::{Border, Panel, Style};
+use tabled::Tabled;
 
 use super::lsm_storage::{key_within, LsmStorageInner, SstStorageState, WriteBatchRecord};
 use super::manifest::ManifestRecord;
@@ -18,7 +18,8 @@ use crate::common::iterator::tow_merge_iterator::TwoMergeIterator;
 use crate::common::iterator::StorageIterator;
 use crate::common::key::KeySlice;
 use crate::common::profier::{
-    display_bytes, ReadProfiler, ReadStatus, ScopedTimerGuard, Timer, WriteProfiler,
+    display_bytes, get_format_tabled, ReadProfiler, ReadStatus, ScopedTimerGuard, Timer,
+    WriteProfiler,
 };
 use crate::compact::CompactionOptions;
 use crate::table::mem_table::MemTable;
@@ -289,6 +290,7 @@ impl SstStorageState {
         level_builder
             .build()
             .with(Panel::header("LevelStatus"))
+            .with(Style::modern().frame(Border::inherit(Style::rounded())))
             .to_string()
     }
 
@@ -300,6 +302,7 @@ impl SstStorageState {
         sst_builder
             .build()
             .with(Panel::header("SstStatus"))
+            .with(Style::modern().frame(Border::inherit(Style::rounded())))
             .to_string()
     }
 }
@@ -310,13 +313,17 @@ impl<T: CompactionOptions> LsmStorageInner<T> {
         builder.push_record(["lsm_folder".into(), self.folder.to_string()]);
         builder.push_record([
             "lsm_options".into(),
-            Table::new([self.options.as_ref()]).to_string(),
+            get_format_tabled(self.options.as_ref()).to_string(),
         ]);
         builder.push_record([
             format!("lsm-compaction({})", T::COMPACTION_TYPE),
             format!("{}", self.options.compaction_options),
         ]);
-        builder.build().with(Panel::header("Options")).to_string()
+        builder
+            .build()
+            .with(Panel::header("Options"))
+            .with(Style::modern().frame(Border::inherit(Style::rounded())))
+            .to_string()
     }
 
     pub(crate) fn show_mem_status(&self) -> String {
@@ -339,6 +346,7 @@ impl<T: CompactionOptions> LsmStorageInner<T> {
         let mem_table = builder
             .build()
             .with(Panel::header("MemTableStatus"))
+            .with(Style::modern().frame(Border::inherit(Style::rounded())))
             .to_string();
         mem_table
     }
@@ -396,7 +404,7 @@ impl<T: CompactionOptions> LsmKV<T> {
             sst_files,
             manifest,
         };
-        Ok(Table::new([lsm_files]).to_string())
+        Ok(get_format_tabled(lsm_files).to_string())
     }
 }
 

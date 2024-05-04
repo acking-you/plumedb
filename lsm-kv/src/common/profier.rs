@@ -2,6 +2,7 @@ use std::fmt::{Debug, Display};
 use std::ops::AddAssign;
 use std::time::{Duration, Instant};
 
+use tabled::settings::{Border, Style};
 use tabled::{Table, Tabled};
 
 /// Guard for profiling
@@ -122,6 +123,12 @@ impl DisplayBytes for usize {
     }
 }
 
+pub fn get_format_tabled<T: Tabled>(item: T) -> Table {
+    let mut table = Table::new([item]);
+    table.with(Style::modern().frame(Border::inherit(Style::rounded())));
+    table
+}
+
 pub fn display_bytes<T: DisplayBytes>(&raw_bytes: &T) -> String {
     const BYTES_MULTIPLIER: f64 = 1024.0;
     enum BytesType {
@@ -170,5 +177,5 @@ fn display_duration(o: &Duration) -> String {
 }
 
 fn display_block_profiler(profiler: &BlockProfiler) -> String {
-    Table::new([profiler]).to_string()
+    get_format_tabled(profiler).to_string()
 }

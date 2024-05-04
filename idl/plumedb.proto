@@ -105,9 +105,10 @@ message FetchedValue{
 }
 
 message SubcribeResp{
-    optional FetchedValue fetched_value = 1;
-    uint64 query_time = 2;
-    string query_id = 3;
+    optional FetchedValue pre_fetched_value = 1;
+    optional bytes channal_value = 2;
+    uint64 query_time = 3;
+    string query_id = 4;
 }
 
 message PublishReq{
@@ -122,13 +123,32 @@ message PublishResp{
     optional string profiler = 3;
 }
 
-service LsmKVService {
+enum ChannelOp{
+    ADD = 0;
+    SHOW = 1;
+}
+
+message ChannelsReq{
+    string channel = 1;
+    ChannelOp op = 2;
+    bool profiler = 3;
+}
+
+message ChannelsResp{
+    uint64 query_time = 1;
+    string query_id = 2;
+    repeated string channels = 3;
+    optional string profiler = 4;
+}
+
+service PlumeDBService {
     rpc fill(FillReq) returns (FillResp);
     rpc get(GetReq) returns (GetResp);
     rpc delete(DelReq) returns (DelResp);
     rpc scan(ScanReq) returns (ScanResp);
     rpc keys(KeysReq) returns (KeysResp);
     rpc show(ShowReq) returns (ShowResp);
-    rpc subcribe(SubcribeReq) returns (SubcribeResp);
+    rpc subcribe(SubcribeReq) returns (stream SubcribeResp);
     rpc publish(PublishReq) returns (PublishResp);
+    rpc channels(ChannelsReq) returns (ChannelsResp);
 }

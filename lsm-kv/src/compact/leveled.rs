@@ -3,7 +3,7 @@ use std::fmt::Display;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use tabled::{Table, Tabled};
+use tabled::Tabled;
 
 use super::super::common::profier::display_bytes;
 use super::utils::compact_generate_sst_from_iter;
@@ -15,6 +15,7 @@ use crate::common::id::TableId;
 use crate::common::iterator::concat_iterator::SstConcatIterator;
 use crate::common::iterator::merge_iterator::MergeIterator;
 use crate::common::iterator::tow_merge_iterator::TwoMergeIterator;
+use crate::common::profier::get_format_tabled;
 use crate::storage::lsm_storage::LsmStorageState;
 use crate::table::sstable::sst_iterator::SsTableIterator;
 
@@ -138,7 +139,7 @@ pub struct LeveledCompactionOptions {
 /// impl `Display` for profiler
 impl Display for LeveledCompactionOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", Table::new([self]))
+        write!(f, "{}", get_format_tabled(self))
     }
 }
 

@@ -1,22 +1,22 @@
 use std::ops::Bound;
 use std::sync::Arc;
 
-use anyhow::Context;
 use lsm_kv::common::iterator::StorageIterator;
-use lsm_kv::common::profier::{ReadProfiler, Timer, WriteProfiler};
+use lsm_kv::common::profier::{get_format_tabled, ReadProfiler, Timer, WriteProfiler};
 use lsm_kv::compact::CompactionOptions;
 use lsm_kv::storage::lsm_iterator::{FusedIterator, LsmIterator};
 use lsm_kv::storage::lsm_storage::WriteBatchRecord;
 use lsm_kv::storage::LsmKV;
 use pilota::Bytes;
-use tabled::Table;
 use uuid::Uuid;
-use volo_gen::plumedb::bound::Value;
 use volo_gen::plumedb::{
     Bound as RpcBound, DelReq, DelResp, FillReq, FillResp, GetReq, GetResp, KeyValePair, KeysReq,
     KeysResp, ScanReq, ScanResp, ShowReq, ShowResp,
 };
 use volo_grpc::{Response, Status};
+
+use super::plumedb::PlumDBServiceImpl;
+use crate::common::utils::map_rpc_bound;
 
 macro_rules! required_not_empty {
     ($field_name:expr, $option:expr) => {
@@ -33,22 +33,14 @@ macro_rules! required_not_empty {
     };
 }
 
-fn map_rpc_bound(value: &Value) -> Bound<&[u8]> {
-    match value {
-        Value::Unbouned(_) => Bound::Unbounded,
-        Value::Include(v) => Bound::Included(v),
-        Value::Exclude(v) => Bound::Excluded(v),
-    }
-}
+pub struct LsmKVService<T: CompactionOptions>(pub(crate) Arc<LsmKV<T>>);
 
-pub struct LsmKVServiceImpl<T: CompactionOptions>(Arc<LsmKV<T>>);
-
-impl<T: CompactionOptions> LsmKVServiceImpl<T> {
+impl<T: CompactionOptions> LsmKVService<T> {
     pub fn new(storage: Arc<LsmKV<T>>) -> Self {
         Self(storage)
     }
 
-    fn fill_inner(&self, pairs: Vec<KeyValePair>) -> anyhow::Result<WriteProfiler> {
+    pub(crate) fn fill_inner(&self, pairs: Vec<KeyValePair>) -> anyhow::Result<WriteProfiler> {
         let write_batch = pairs
             .into_iter()
             .map(|pair| {
@@ -66,13 +58,13 @@ impl<T: CompactionOptions> LsmKVServiceImpl<T> {
         Ok(profiler)
     }
 
-    fn get_inner(&self, key: Bytes) -> anyhow::Result<(Option<Bytes>, ReadProfiler)> {
+    pub(crate) fn get_inner(&self, key: Bytes) -> anyhow::Result<(Option<Bytes>, ReadProfiler)> {
         let mut profiler = ReadProfiler::default();
         let res = self.0.get_with_profier(&mut profiler, &key)?;
         Ok((res, profiler))
     }
 
-    fn scan_inner(
+    pub(crate) fn scan_inner(
         &self,
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
@@ -82,26 +74,23 @@ impl<T: CompactionOptions> LsmKVServiceImpl<T> {
     }
 }
 
-impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<T> {
-    async fn fill(
-        &self,
-        req: ::volo_grpc::Request<FillReq>,
-    ) -> ::std::result::Result<::volo_grpc::Response<FillResp>, Status> {
+impl<T: CompactionOptions> PlumDBServiceImpl<T> {
+    pub(crate) fn fill_inner(&self, req: FillReq) -> Result<Response<FillResp>, Status> {
         let FillReq {
             pairs,
             query_profiler,
-        } = req.into_inner();
+        } = req;
 
         let query_id = Uuid::new_v4().to_string();
         let uuid_span = tracing::info_span!("UUID", query_id);
         let _enter = uuid_span.enter();
-        let profiler = self.fill_inner(pairs).map_err(|e| {
-            tracing::error!("fill error:{e}");
-            Status::internal(format!("{e}"))
-        })?;
+        let profiler = self
+            .lsm_kv_service
+            .fill_inner(pairs)
+            .map_err(|e| Status::internal(format!("fill error:{e}")))?;
 
         let query_time = profiler.write_total_time.as_nanos() as u64;
-        let profiler = Table::new([&profiler]).to_string();
+        let profiler = get_format_tabled(profiler).to_string();
         tracing::info!("filled with profiler:\n{}", profiler);
 
         let resp = FillResp {
@@ -116,25 +105,22 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
         Ok(Response::new(resp))
     }
 
-    async fn get(
-        &self,
-        req: ::volo_grpc::Request<GetReq>,
-    ) -> std::result::Result<::volo_grpc::Response<GetResp>, ::volo_grpc::Status> {
+    pub(crate) fn get_inner(&self, req: GetReq) -> Result<Response<GetResp>, Status> {
         let GetReq {
             key,
             query_profiler,
-        } = req.into_inner();
+        } = req;
 
         let query_id = Uuid::new_v4().to_string();
         let uuid_span = tracing::info_span!("UUID", query_id);
         let _enter = uuid_span.enter();
-        let (value, profiler) = self.get_inner(key).map_err(|e| {
-            tracing::error!("get error:{e}");
-            Status::internal(format!("{e}"))
-        })?;
+        let (value, profiler) = self
+            .lsm_kv_service
+            .get_inner(key)
+            .map_err(|e| Status::internal(format!("get error:{e}")))?;
 
         let query_time = profiler.read_total_time.as_nanos() as u64;
-        let profiler = Table::new([&profiler]).to_string();
+        let profiler = get_format_tabled(profiler).to_string();
         tracing::info!("get with profiler:\n{}", profiler);
 
         Ok(Response::new(GetResp {
@@ -149,15 +135,12 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
         }))
     }
 
-    async fn scan(
-        &self,
-        req: ::volo_grpc::Request<ScanReq>,
-    ) -> std::result::Result<::volo_grpc::Response<ScanResp>, ::volo_grpc::Status> {
+    pub(crate) fn scan_inner(&self, req: ScanReq) -> Result<Response<ScanResp>, Status> {
         let ScanReq {
             upper,
             lower,
             query_profiler,
-        } = req.into_inner();
+        } = req;
 
         let query_id = Uuid::new_v4().to_string();
         let uuid_span = tracing::info_span!("UUID", query_id);
@@ -169,6 +152,7 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
 
         let total_time = Timer::now();
         let mut iter = self
+            .lsm_kv_service
             .scan_inner(map_rpc_bound(&lower), map_rpc_bound(&upper))
             .map_err(|e| Status::internal(format!("{e}")))?;
 
@@ -181,7 +165,7 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
             iter.next().map_err(|e| Status::internal(format!("{e}")))?;
         }
         let profiler = iter.block_profiler();
-        let profiler = Table::new([&profiler]).to_string();
+        let profiler = get_format_tabled(profiler).to_string();
 
         tracing::info!("scan with profiler:\n{}", profiler);
         Ok(Response::new(ScanResp {
@@ -196,15 +180,12 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
         }))
     }
 
-    async fn keys(
-        &self,
-        req: ::volo_grpc::Request<KeysReq>,
-    ) -> Result<::volo_grpc::Response<KeysResp>, ::volo_grpc::Status> {
+    pub(crate) fn keys_inner(&self, req: KeysReq) -> Result<Response<KeysResp>, Status> {
         let KeysReq {
             upper,
             lower,
             query_profiler,
-        } = req.into_inner();
+        } = req;
 
         let query_id = Uuid::new_v4().to_string();
         let uuid_span = tracing::info_span!("UUID", query_id);
@@ -216,6 +197,7 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
 
         let total_time = Timer::now();
         let mut iter = self
+            .lsm_kv_service
             .scan_inner(map_rpc_bound(&lower), map_rpc_bound(&upper))
             .map_err(|e| Status::internal(format!("{e}")))?;
 
@@ -225,7 +207,7 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
             iter.next().map_err(|e| Status::internal(format!("{e}")))?;
         }
         let profiler = iter.block_profiler();
-        let profiler = Table::new([&profiler]).to_string();
+        let profiler = get_format_tabled(profiler).to_string();
         tracing::info!("keys with profiler:\n{}", profiler);
         Ok(Response::new(KeysResp {
             keys,
@@ -239,24 +221,22 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
         }))
     }
 
-    async fn delete(
-        &self,
-        req: ::volo_grpc::Request<DelReq>,
-    ) -> Result<::volo_grpc::Response<DelResp>, ::volo_grpc::Status> {
+    pub(crate) fn delete_inner(&self, req: DelReq) -> Result<Response<DelResp>, Status> {
         let DelReq {
             key,
             query_profiler,
-        } = req.into_inner();
+        } = req;
 
         let mut profiler = WriteProfiler::default();
         let query_id = Uuid::new_v4().to_string();
         let uuid_span = tracing::info_span!("UUID", query_id);
         let _enter = uuid_span.enter();
-        self.0
+        self.lsm_kv_service
+            .0
             .write_bytes_batch_with_profier(&mut profiler, &[WriteBatchRecord::Del(key)])
-            .map_err(|e| Status::internal(format!("{e}")))?;
+            .map_err(|e| Status::internal(format!("delete failed with error:{e}")))?;
         let query_time = profiler.write_total_time.as_nanos() as u64;
-        let profiler = Table::new([&profiler]).to_string();
+        let profiler = get_format_tabled(profiler).to_string();
 
         tracing::info!("delete with profiler:\n{}", profiler);
         Ok(Response::new(DelResp {
@@ -270,11 +250,8 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
         }))
     }
 
-    async fn show(
-        &self,
-        req: ::volo_grpc::Request<ShowReq>,
-    ) -> Result<::volo_grpc::Response<ShowResp>, ::volo_grpc::Status> {
-        let ShowReq { status } = req.into_inner();
+    pub(crate) fn show_inner(&self, req: ShowReq) -> Result<Response<ShowResp>, Status> {
+        let ShowReq { status } = req;
 
         let query_id = Uuid::new_v4().to_string();
         let uuid_span = tracing::info_span!("UUID", query_id);
@@ -282,13 +259,14 @@ impl<T: CompactionOptions> volo_gen::plumedb::LsmKvService for LsmKVServiceImpl<
         let total_time = Timer::now();
         let status_graph = match status {
             volo_gen::plumedb::StatusType::Files => self
+                .lsm_kv_service
                 .0
                 .show_files()
                 .map_err(|e| Status::internal(format!("show files status err:{e}")))?,
-            volo_gen::plumedb::StatusType::Memtable => self.0.show_mem_status(),
-            volo_gen::plumedb::StatusType::Sst => self.0.show_sst_status(),
-            volo_gen::plumedb::StatusType::Level => self.0.show_level_status(),
-            volo_gen::plumedb::StatusType::Options => self.0.show_options(),
+            volo_gen::plumedb::StatusType::Memtable => self.lsm_kv_service.0.show_mem_status(),
+            volo_gen::plumedb::StatusType::Sst => self.lsm_kv_service.0.show_sst_status(),
+            volo_gen::plumedb::StatusType::Level => self.lsm_kv_service.0.show_level_status(),
+            volo_gen::plumedb::StatusType::Options => self.lsm_kv_service.0.show_options(),
         };
         Ok(Response::new(ShowResp {
             status_graph: status_graph.into(),
