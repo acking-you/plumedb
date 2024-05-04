@@ -4,7 +4,7 @@ use std::time::Duration;
 use clap::Parser;
 use colored::Colorize;
 use futures::StreamExt;
-use lsm_kv::common::config::init_tracing;
+use plumedb::common::config::init_tracing;
 use mimalloc_rust::GlobalMiMalloc;
 use nu_pretty_hex::PrettyHex;
 use once_cell::sync::Lazy;
