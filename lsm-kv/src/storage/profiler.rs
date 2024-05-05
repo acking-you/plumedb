@@ -305,6 +305,9 @@ impl SstStorageState {
         self.sstables.iter().for_each(|(idx, item)| {
             sst_builder.push_record([format!("SST({})", idx), display_bytes(&item.table_size())]);
         });
+        if self.sstables.is_empty() {
+            sst_builder.push_record(["None"]);
+        }
         sst_builder
             .build()
             .with(Panel::header("SstStatus"))
