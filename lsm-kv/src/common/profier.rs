@@ -2,7 +2,8 @@ use std::fmt::{Debug, Display};
 use std::ops::AddAssign;
 use std::time::{Duration, Instant};
 
-use tabled::settings::{Border, Style};
+use tabled::builder::Builder;
+use tabled::settings::{Border, Panel, Style};
 use tabled::{Table, Tabled};
 
 /// Guard for profiling
@@ -103,7 +104,7 @@ pub struct ReadProfiler {
     pub filter_num: u32,
     #[tabled(display_with("display_bytes"))]
     pub filter_bytes: u64,
-    #[tabled(display_with("display_block_profiler"))]
+    #[tabled(skip)]
     pub block_profier: BlockProfiler,
 }
 
@@ -121,6 +122,20 @@ impl DisplayBytes for usize {
     fn cast_f64(&self) -> f64 {
         *self as f64
     }
+}
+
+pub fn get_format_read_profiler(read_profiler: &ReadProfiler) -> Table {
+    let mut builder = Builder::new();
+    builder.push_record([format!("{}", get_format_tabled(read_profiler))]);
+    builder.push_record([format!(
+        "{}",
+        get_format_tabled(read_profiler.block_profier)
+    )]);
+    let mut table = builder.build();
+    table
+        .with(Panel::header("ReadProfiler"))
+        .with(Style::modern().frame(Border::inherit(Style::rounded())));
+    table
 }
 
 pub fn get_format_tabled<T: Tabled>(item: T) -> Table {
@@ -174,8 +189,4 @@ pub fn display_bytes<T: DisplayBytes>(&raw_bytes: &T) -> String {
 
 fn display_duration(o: &Duration) -> String {
     format!("{o:?}")
-}
-
-fn display_block_profiler(profiler: &BlockProfiler) -> String {
-    get_format_tabled(profiler).to_string()
 }

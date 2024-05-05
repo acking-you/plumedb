@@ -8,7 +8,9 @@ use std::sync::Arc;
 use anyhow::Context;
 use dashmap::DashMap;
 use lsm_kv::common::iterator::StorageIterator;
-use lsm_kv::common::profier::{get_format_tabled, ReadProfiler, Timer, WriteProfiler};
+use lsm_kv::common::profier::{
+    get_format_read_profiler, get_format_tabled, ReadProfiler, Timer, WriteProfiler,
+};
 use lsm_kv::compact::CompactionOptions;
 use lsm_kv::storage::lsm_storage::{LsmStorageOptions, WriteBatchRecord};
 use lsm_kv::storage::LsmKV;
@@ -207,12 +209,14 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
                 let channel_name = FastStr::from_bytes(Bytes::copy_from_slice(raw_name))
                     .context("[channel name] bytes to string error")?;
                 let key = get_chan_latest_msg_id_key(&channel_name);
-                let id = lsm_kv_service
+                let id = match lsm_kv_service
                     .0
                     .get_with_profier(&mut msg_id_read, &key)
                     .context("[channel msg id] get latest channel msg id error")?
-                    .context("[channel msg id] msg id not exist")?
-                    .get_u64();
+                {
+                    Some(mut b) => b.get_u64(),
+                    None => 0,
+                };
 
                 channels.insert(channel_name, (MessageIdBuilder::new(id.into()), Vec::new()));
                 iter.next().context("[channel name] iter next error")?;
@@ -227,7 +231,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             let channel_name_read = iter.block_profiler();
             tracing::info!(
                 "Recover pub/sub ok! read msg_id profiler:\n{}\nread channel name profiler:\n{}",
-                get_format_tabled(msg_id_read),
+                get_format_read_profiler(&msg_id_read),
                 get_format_tabled(channel_name_read)
             );
             Ok(Self {

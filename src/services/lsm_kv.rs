@@ -2,7 +2,9 @@ use std::ops::Bound;
 use std::sync::Arc;
 
 use lsm_kv::common::iterator::StorageIterator;
-use lsm_kv::common::profier::{get_format_tabled, ReadProfiler, Timer, WriteProfiler};
+use lsm_kv::common::profier::{
+    get_format_read_profiler, get_format_tabled, ReadProfiler, Timer, WriteProfiler,
+};
 use lsm_kv::compact::CompactionOptions;
 use lsm_kv::storage::lsm_iterator::{FusedIterator, LsmIterator};
 use lsm_kv::storage::lsm_storage::WriteBatchRecord;
@@ -120,7 +122,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             .map_err(|e| Status::internal(format!("get error:{e}")))?;
 
         let query_time = profiler.read_total_time.as_nanos() as u64;
-        let profiler = get_format_tabled(profiler).to_string();
+        let profiler = get_format_read_profiler(&profiler).to_string();
         tracing::info!("get with profiler:\n{}", profiler);
 
         Ok(Response::new(GetResp {

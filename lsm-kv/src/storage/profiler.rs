@@ -267,7 +267,10 @@ struct LsmFilesStatus {
 fn display_files_info(files: &[(String, String)]) -> String {
     let mut builder = Builder::new();
     files.iter().for_each(|f| builder.push_record([&f.0, &f.1]));
-    builder.build().to_string()
+    builder
+        .build()
+        .with(Style::modern().frame(Border::inherit(Style::rounded())))
+        .to_string()
 }
 
 fn display_manifest(manifest: &Option<String>) -> String {
@@ -276,7 +279,10 @@ fn display_manifest(manifest: &Option<String>) -> String {
         Some(v) => builder.push_record([v]),
         None => builder.push_record(["None"]),
     }
-    builder.build().to_string()
+    builder
+        .build()
+        .with(Style::modern().frame(Border::inherit(Style::rounded())))
+        .to_string()
 }
 
 impl SstStorageState {
