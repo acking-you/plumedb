@@ -9,7 +9,8 @@ use anyhow::Context;
 use dashmap::DashMap;
 use lsm_kv::common::iterator::StorageIterator;
 use lsm_kv::common::profier::{
-    get_format_read_profiler, get_format_tabled, ReadProfiler, Timer, WriteProfiler,
+    get_format_block_profiler, get_format_read_profiler, get_format_write_profiler, ReadProfiler,
+    Timer, WriteProfiler,
 };
 use lsm_kv::compact::CompactionOptions;
 use lsm_kv::storage::lsm_storage::{LsmStorageOptions, WriteBatchRecord};
@@ -232,7 +233,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             tracing::info!(
                 "Recover pub/sub ok! read msg_id profiler:\n{}\nread channel name profiler:\n{}",
                 get_format_read_profiler(&msg_id_read),
-                get_format_tabled(channel_name_read)
+                get_format_block_profiler(&channel_name_read)
             );
             Ok(Self {
                 lsm_kv_service,
@@ -272,7 +273,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             let mut write_profiler = WriteProfiler::default();
             self.register_channel(key.clone(), &mut write_profiler)
                 .await?;
-            let profiler = get_format_tabled(write_profiler);
+            let profiler = get_format_write_profiler(&write_profiler);
             tracing::info!("register channel profiler:\n{}", profiler);
         }
         // send prev msg
@@ -302,7 +303,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             let profiler = iter.block_profiler();
             tracing::info!(
                 "[subcribe pre_fetched] profiler:\n{}",
-                get_format_tabled(profiler)
+                get_format_block_profiler(&profiler)
             );
         }
         // waiting for new msg
@@ -435,7 +436,9 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
                 )
                 .context("[publish KV msg id]")?;
         }
-        let profiler_text = get_format_tabled(write_profiler).to_string().into();
+        let profiler_text = get_format_write_profiler(&write_profiler)
+            .to_string()
+            .into();
         tracing::info!("publish ok,with write profiler:\n{profiler_text}");
 
         Ok(Response::new(PublishResp {
@@ -462,7 +465,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
                     self.channels.insert(channel.clone(), (builder, Vec::new()));
                     let mut write_profiler = WriteProfiler::default();
                     self.register_channel(channel, &mut write_profiler).await?;
-                    let table = get_format_tabled(write_profiler);
+                    let table = get_format_write_profiler(&write_profiler);
                     tracing::info!("[channel add] profiler:\n{table}");
                     (
                         Vec::new(),
@@ -492,7 +495,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
                     iter.next().context("[channel show] iter next")?;
                 }
                 let block_profiler = iter.block_profiler();
-                let table = get_format_tabled(block_profiler);
+                let table = get_format_block_profiler(&block_profiler);
                 tracing::info!("[channel show] profiler:\n{table}");
                 (
                     channels,

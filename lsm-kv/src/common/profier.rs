@@ -41,14 +41,20 @@ pub struct WriteProfiler {
     pub write_total_time: Duration,
     #[tabled(display_with("display_duration"))]
     pub freeze_time: Duration,
+    #[tabled(skip)]
+    pub status: WriteStatus,
+}
+
+#[derive(Debug, Clone, Copy, Default, Tabled)]
+pub struct WriteStatus {
     #[tabled(display_with("display_duration"))]
     pub read_lock_time: Duration,
     /// write lock time (get state lock or get state write lock)
     #[tabled(display_with("display_duration"))]
     pub write_lock_time: Duration,
+    pub write_num: u64,
     #[tabled(display_with("display_bytes"))]
     pub write_bytes: u64,
-    pub filled_num: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -138,7 +144,28 @@ pub fn get_format_read_profiler(read_profiler: &ReadProfiler) -> Table {
     table
 }
 
-pub fn get_format_tabled<T: Tabled>(item: T) -> Table {
+pub fn get_format_write_profiler(write_profiler: &WriteProfiler) -> Table {
+    let mut builder = Builder::new();
+    builder.push_record([format!("{}", get_format_tabled(write_profiler))]);
+    builder.push_record([format!("{}", get_format_tabled(write_profiler.status))]);
+    let mut table = builder.build();
+    table
+        .with(Panel::header("WriteProfiler"))
+        .with(Style::modern().frame(Border::inherit(Style::rounded())));
+    table
+}
+
+pub fn get_format_block_profiler(block_profiler: &BlockProfiler) -> Table {
+    let mut builder = Builder::new();
+    builder.push_record([format!("{}", get_format_tabled(block_profiler))]);
+    let mut table = builder.build();
+    table
+        .with(Panel::header("BlockProfiler"))
+        .with(Style::modern().frame(Border::inherit(Style::rounded())));
+    table
+}
+
+pub(crate) fn get_format_tabled<T: Tabled>(item: T) -> Table {
     let mut table = Table::new([item]);
     table.with(Style::modern().frame(Border::inherit(Style::rounded())));
     table

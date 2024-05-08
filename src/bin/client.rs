@@ -37,7 +37,7 @@ struct Cli {
     server_addr: Option<String>,
 }
 
-static CLIENT: Lazy<Box<PlumeDbServiceClient>> = Lazy::new(|| {
+static CLIENT: Lazy<PlumeDbServiceClient> = Lazy::new(|| {
     let addr = match std::env::var(PLUME_CLIENT_ADDR_ENV) {
         Ok(a) => match a.parse::<SocketAddr>() {
             Ok(addr) => addr,
@@ -54,11 +54,10 @@ static CLIENT: Lazy<Box<PlumeDbServiceClient>> = Lazy::new(|| {
             DEFAULT_SERVER_ADDR
         }
     };
-    Box::new(
-        PlumeDbServiceClientBuilder::new("plumedb")
-            .address(addr)
-            .build(),
-    )
+
+    PlumeDbServiceClientBuilder::new("plumedb")
+        .address(addr)
+        .build()
 });
 
 fn print_query_time_with_id(query_time: u64, query_id: &str) {

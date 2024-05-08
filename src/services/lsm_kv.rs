@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use lsm_kv::common::iterator::StorageIterator;
 use lsm_kv::common::profier::{
-    get_format_read_profiler, get_format_tabled, ReadProfiler, Timer, WriteProfiler,
+    get_format_block_profiler, get_format_read_profiler, get_format_write_profiler, ReadProfiler,
+    Timer, WriteProfiler,
 };
 use lsm_kv::compact::CompactionOptions;
 use lsm_kv::storage::lsm_iterator::{FusedIterator, LsmIterator};
@@ -92,7 +93,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             .map_err(|e| Status::internal(format!("fill error:{e}")))?;
 
         let query_time = profiler.write_total_time.as_nanos() as u64;
-        let profiler = get_format_tabled(profiler).to_string();
+        let profiler = get_format_write_profiler(&profiler).to_string();
         tracing::info!("filled with profiler:\n{}", profiler);
 
         let resp = FillResp {
@@ -167,7 +168,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             iter.next().map_err(|e| Status::internal(format!("{e}")))?;
         }
         let profiler = iter.block_profiler();
-        let profiler = get_format_tabled(profiler).to_string();
+        let profiler = get_format_block_profiler(&profiler).to_string();
 
         tracing::info!("scan with profiler:\n{}", profiler);
         Ok(Response::new(ScanResp {
@@ -209,7 +210,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             iter.next().map_err(|e| Status::internal(format!("{e}")))?;
         }
         let profiler = iter.block_profiler();
-        let profiler = get_format_tabled(profiler).to_string();
+        let profiler = get_format_block_profiler(&profiler).to_string();
         tracing::info!("keys with profiler:\n{}", profiler);
         Ok(Response::new(KeysResp {
             keys,
@@ -238,7 +239,7 @@ impl<T: CompactionOptions> PlumDBServiceImpl<T> {
             .write_bytes_batch_with_profier(&mut profiler, &[WriteBatchRecord::Del(key)])
             .map_err(|e| Status::internal(format!("delete failed with error:{e}")))?;
         let query_time = profiler.write_total_time.as_nanos() as u64;
-        let profiler = get_format_tabled(profiler).to_string();
+        let profiler = get_format_write_profiler(&profiler).to_string();
 
         tracing::info!("delete with profiler:\n{}", profiler);
         Ok(Response::new(DelResp {

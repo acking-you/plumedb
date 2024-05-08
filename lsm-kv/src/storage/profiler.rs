@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use super::lsm_storage::{key_within, LsmStorageInner, SstStorageState, WriteBatc
 use super::manifest::ManifestRecord;
 use super::LsmKV;
 use crate::common::file::{MANIFEST_NAME, SST_EXT, WAL_EXT};
+use crate::common::id::TableId;
 use crate::common::iterator::concat_iterator::SstConcatIterator;
 use crate::common::iterator::merge_iterator::MergeIterator;
 use crate::common::iterator::tow_merge_iterator::TwoMergeIterator;
@@ -40,10 +42,14 @@ impl<T: CompactionOptions> LsmStorageInner<T> {
         estimated_size: usize,
     ) -> anyhow::Result<()> {
         if estimated_size >= self.options.target_sst_size {
-            let state_lock =
-                get_lock_guard_with_profiler!(&mut profier.write_lock_time, self.state_lock.lock());
-            let guard =
-                get_lock_guard_with_profiler!(&mut profier.read_lock_time, self.state.read());
+            let state_lock = get_lock_guard_with_profiler!(
+                &mut profier.status.write_lock_time,
+                self.state_lock.lock()
+            );
+            let guard = get_lock_guard_with_profiler!(
+                &mut profier.status.read_lock_time,
+                self.state.read()
+            );
             // the memtable could have already been frozen, check again to ensure we really need to
             // freeze
             if guard.memtable.approximate_size() >= self.options.target_sst_size {
@@ -60,7 +66,7 @@ impl<T: CompactionOptions> LsmStorageInner<T> {
         memtable: Arc<MemTable>,
     ) -> anyhow::Result<()> {
         let mut guard =
-            get_lock_guard_with_profiler!(&mut profier.write_lock_time, self.state.write());
+            get_lock_guard_with_profiler!(&mut profier.status.write_lock_time, self.state.write());
 
         // Swap the current memtable with a new one.
         let mut snapshot = guard.as_ref().clone();
@@ -119,7 +125,7 @@ impl<T: CompactionOptions> LsmStorageInner<T> {
                     assert!(!key.is_empty(), "key cannot be empty");
                     let size = {
                         let guard = get_lock_guard_with_profiler!(
-                            &mut profier.read_lock_time,
+                            &mut profier.status.read_lock_time,
                             self.state.read()
                         );
                         guard.memtable.put_bytes_with_profier(
@@ -130,14 +136,14 @@ impl<T: CompactionOptions> LsmStorageInner<T> {
                         guard.memtable.approximate_size()
                     };
                     self.try_freeze_profiler(profier, size)?;
-                    profier.write_bytes += key.len() as u64;
+                    profier.status.write_bytes += key.len() as u64;
                 }
                 WriteBatchRecord::Put(key, value) => {
                     assert!(!key.is_empty(), "key cannot be empty");
                     assert!(!value.is_empty(), "value cannot be empty");
                     let size = {
                         let guard = get_lock_guard_with_profiler!(
-                            &mut profier.read_lock_time,
+                            &mut profier.status.read_lock_time,
                             self.state.read()
                         );
                         guard.memtable.put_bytes_with_profier(
@@ -148,11 +154,11 @@ impl<T: CompactionOptions> LsmStorageInner<T> {
                         guard.memtable.approximate_size()
                     };
                     self.try_freeze_profiler(profier, size)?;
-                    profier.write_bytes += key.len() as u64;
-                    profier.write_bytes += value.len() as u64;
+                    profier.status.write_bytes += key.len() as u64;
+                    profier.status.write_bytes += value.len() as u64;
                 }
             }
-            profier.filled_num += 1;
+            profier.status.write_num += 1;
             profier.write_total_time += once_time.elapsed();
         }
         Ok(())
@@ -285,12 +291,30 @@ fn display_manifest(manifest: &Option<String>) -> String {
         .to_string()
 }
 
+struct SSTLevelFormatter<'a>(&'a Vec<TableId>);
+const NEXT_LINE_COUNT: usize = 10;
+
+impl Debug for SSTLevelFormatter<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for chunk in self.0.chunks(NEXT_LINE_COUNT) {
+            writeln!(f, "{chunk:?}")?
+        }
+        Ok(())
+    }
+}
+
 impl SstStorageState {
     fn show_level_status(&self) -> String {
         let mut level_builder = Builder::new();
-        level_builder.push_record(["L0".into(), format!("{:?}", self.l0_sstables)]);
+        level_builder.push_record([
+            "L0".into(),
+            format!("{:?}", SSTLevelFormatter(&self.l0_sstables)),
+        ]);
         self.levels.iter().enumerate().for_each(|(idx, item)| {
-            level_builder.push_record([format!("L{idx}({})", item.0), format!("{:?}", item.1)]);
+            level_builder.push_record([
+                format!("L{idx}({})", item.0),
+                format!("{:?}", SSTLevelFormatter(&item.1)),
+            ]);
         });
 
         level_builder
