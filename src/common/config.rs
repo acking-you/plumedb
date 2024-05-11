@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use clap::Subcommand;
-use tracing_subscriber::{layer::SubscriberExt, Layer};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Layer;
 
 pub fn get_user_path() -> anyhow::Result<PathBuf> {
     if cfg!(windows) {
@@ -16,8 +17,9 @@ pub fn get_user_path() -> anyhow::Result<PathBuf> {
 
 const LSM_DIR: &str = ".lsm";
 
-pub fn get_lsm_path() -> anyhow::Result<PathBuf> {
-    Ok(get_user_path()?.join(LSM_DIR))
+#[inline]
+pub fn get_lsm_path(path: impl AsRef<Path>) -> PathBuf {
+    path.as_ref().join(LSM_DIR)
 }
 
 #[derive(Debug, Clone, Copy, Subcommand)]
@@ -40,7 +42,6 @@ pub enum CompactionOptions {
     },
     Tiered {},
 }
-
 
 pub fn init_tracing<const NO_FORMAT: bool>() {
     if NO_FORMAT {

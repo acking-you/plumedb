@@ -7,7 +7,9 @@ use lsm_kv::compact::leveled::LeveledCompactionOptions;
 use lsm_kv::compact::CompactionOptions;
 use lsm_kv::storage::lsm_storage::LsmStorageOptions;
 use mimalloc_rust::GlobalMiMalloc;
-use plumedb::common::config::{get_lsm_path, CompactionOptions as CliCompactionOptions};
+use plumedb::common::config::{
+    get_lsm_path, get_user_path, CompactionOptions as CliCompactionOptions,
+};
 use plumedb::services::plumedb::PlumDBServiceImpl;
 use volo_grpc::server::{Server, ServiceBuilder};
 
@@ -77,12 +79,25 @@ async fn run_with_compaction_options<T: CompactionOptions>(compaction_options: T
     };
 
     let addr: SocketAddr = match &cli.server_addr {
-        Some(a) => a.parse().unwrap(),
+        Some(a) => {
+            if let Ok(a) = a.parse::<SocketAddr>() {
+                a
+            } else {
+                tracing::error!("parse address:{a} error!");
+                return;
+            }
+        }
         None => "[::]:8080".parse().unwrap(),
     };
+
     let addr = volo::net::Address::from(addr);
 
-    let s = PlumDBServiceImpl::recover(get_lsm_path().unwrap(), lsm_storage_options).unwrap();
+    let path = match cli.lsm_path.as_ref() {
+        Some(p) => get_lsm_path(p),
+        None => get_lsm_path(get_user_path().expect("get user path never fails")),
+    };
+
+    let s = PlumDBServiceImpl::recover(path, lsm_storage_options).unwrap();
     Server::new()
         .add_service(ServiceBuilder::new(volo_gen::plumedb::PlumeDbServiceServer::new(s)).build())
         .run(addr)

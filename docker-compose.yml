@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  plumedb:
+    container_name: plumedb
+    ports:
+      - 8080:8080 # port mapping
+    image: ackingliu/plumedb:dev
+    environment:
+      - RUST_LOG=error
+    volumes:
+      - /root:/plumedb/data # mount path
+    restart: unless-stopped
